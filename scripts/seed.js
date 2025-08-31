@@ -13,7 +13,7 @@ async function seed() {
     console.log('Starting database seeding...')
     
     // デフォルト管理者ユーザーの作成
-    const hashedPassword = await bcrypt.hash('password', 10)
+    const hashedPassword = await bcrypt.hash('admin123', 10)
     
     // ユーザーが既に存在するかチェック
     const existingUser = await client.query(
@@ -53,7 +53,7 @@ async function seed() {
     }
     
     console.log('Database seeding completed!')
-    console.log('Admin credentials: admin / password')
+    console.log('Admin credentials: admin / admin123')
     
   } catch (error) {
     console.error('Error seeding database:', error)

@@ -7,6 +7,7 @@
     "build": "next build --turbopack",
     "start": "next start",
     "lint": "eslint",
+    "postbuild": "node scripts/seed.js",
     "db:seed": "node scripts/seed-database.js",
     "db:seed:small": "node scripts/seed-database.js 10000",
     "db:seed:large": "node scripts/seed-database.js 1000000",

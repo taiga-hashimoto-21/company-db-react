@@ -12,10 +12,10 @@ export async function GET() {
     
     try {
       const result = await client.query(`
-        SELECT id, filename, upload_date, total_records, success_records, 
-               error_records, file_size_kb, uploaded_by, batch_id, status
+        SELECT id, filename, created_at, total_records, successful_records, 
+               failed_records, file_size_kb, uploaded_by, batch_id, status
         FROM prtimes_uploads
-        ORDER BY upload_date DESC
+        ORDER BY created_at DESC
         LIMIT 50
       `)
       
@@ -23,10 +23,10 @@ export async function GET() {
         uploads: result.rows.map(row => ({
           id: row.id,
           filename: row.filename,
-          uploadDate: row.upload_date,
+          uploadDate: row.created_at,
           totalRecords: row.total_records,
-          successRecords: row.success_records,
-          errorRecords: row.error_records,
+          successRecords: row.successful_records,
+          errorRecords: row.failed_records,
           fileSizeKb: row.file_size_kb,
           uploadedBy: row.uploaded_by,
           batchId: row.batch_id,
@@ -64,7 +64,7 @@ export async function DELETE(request: NextRequest) {
       
       // バッチに関連するデータを削除
       const companiesResult = await client.query(
-        'DELETE FROM prtimes_companies WHERE upload_batch_id = $1',
+        'DELETE FROM prtimes_data WHERE upload_batch_id = $1',
         [batchId]
       )
       

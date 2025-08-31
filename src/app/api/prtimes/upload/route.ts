@@ -104,8 +104,6 @@ export async function POST(request: NextRequest) {
     const client = await pool.connect()
     
     try {
-      // トランザクション削除（処理を高速化）
-      
       // バッチIDを生成してアップロード履歴を記録
       const batchId = 'batch_' + Date.now()
       const batchResult = await client.query(`
@@ -123,9 +121,35 @@ export async function POST(request: NextRequest) {
       const uploadId = batchResult.rows[0].id
       const returnedBatchId = batchResult.rows[0].batch_id
       
-      let successCount = 0
-      let errorCount = 0
-      const errors: string[] = []
+      // batchIdを即座に返してフロントエンドが進捗監視を開始できるようにする
+      // 実際の処理は非同期で実行（新しい接続を使用）
+      processCSVAsync(lines, uploadId, batchId)
+      
+      return NextResponse.json({
+        message: 'CSV upload started',
+        batchId: returnedBatchId
+      })
+    } catch (error) {
+      throw error
+    } finally {
+      client.release()
+    }
+  } catch (error) {
+    console.error('CSV upload error:', error)
+    return NextResponse.json(
+      { error: 'Failed to upload CSV file' },
+      { status: 500 }
+    )
+  }
+}
+
+async function processCSVAsync(lines: string[], uploadId: number, batchId: string) {
+  const client = await pool.connect()
+  let successCount = 0
+  let errorCount = 0
+  const errors: string[] = []
+  
+  try {
       
       for (let i = 2; i < lines.length; i++) {
         let values: string[] = []
@@ -226,12 +250,14 @@ export async function POST(request: NextRequest) {
           
           successCount++
           
-          // 1行ごとに進捗を更新
-          await client.query(`
-            UPDATE prtimes_uploads 
-            SET progress_count = $1
-            WHERE id = $2
-          `, [successCount + errorCount, uploadId])
+          // 10行ごとに進捗を更新（パフォーマンス向上とリアルタイム更新のバランス）
+          if ((successCount + errorCount) % 10 === 0 || i === lines.length - 1) {
+            await client.query(`
+              UPDATE prtimes_uploads 
+              SET progress_count = $1
+              WHERE id = $2
+            `, [successCount + errorCount, uploadId])
+          }
         } catch (rowError) {
           console.error(`Error processing row ${i}:`, rowError)
           console.error(`Row data:`, values || 'undefined')
@@ -240,40 +266,35 @@ export async function POST(request: NextRequest) {
           errors.push(`行 ${i}: ${errorMessage} - データ: ${JSON.stringify(safeValues.slice(0, 5))}`)
           errorCount++
           
-          // 1行ごとに進捗を更新
-          await client.query(`
-            UPDATE prtimes_uploads 
-            SET progress_count = $1
-            WHERE id = $2
-          `, [successCount + errorCount, uploadId])
+          // 10行ごとに進捗を更新（パフォーマンス向上とリアルタイム更新のバランス）
+          if ((successCount + errorCount) % 10 === 0 || i === lines.length - 1) {
+            await client.query(`
+              UPDATE prtimes_uploads 
+              SET progress_count = $1
+              WHERE id = $2
+            `, [successCount + errorCount, uploadId])
+          }
         }
       }
       
-      // アップロード履歴を更新
-      const status = errorCount === 0 ? 'completed' : (successCount > 0 ? 'partial' : 'failed')
-      await client.query(`
-        UPDATE prtimes_uploads 
-        SET success_records = $1, error_records = $2, status = $3, progress_count = $5
-        WHERE id = $4
-      `, [successCount, errorCount, status, uploadId, successCount + errorCount])
-      
-      return NextResponse.json({
-        message: 'CSV upload completed',
-        successCount,
-        errorCount,
-        errors: errors.slice(0, 10),
-        batchId
-      })
-    } catch (error) {
-      throw error
-    } finally {
-      client.release()
-    }
+    // アップロード履歴を更新
+    const status = errorCount === 0 ? 'completed' : (successCount > 0 ? 'partial' : 'failed')
+    await client.query(`
+      UPDATE prtimes_uploads 
+      SET success_records = $1, error_records = $2, status = $3, progress_count = $5
+      WHERE id = $4
+    `, [successCount, errorCount, status, uploadId, successCount + errorCount])
+    
+    console.log(`✅ CSV processing completed: ${successCount} success, ${errorCount} errors`)
   } catch (error) {
-    console.error('CSV upload error:', error)
-    return NextResponse.json(
-      { error: 'Failed to upload CSV file' },
-      { status: 500 }
-    )
+    console.error('❌ Error in async CSV processing:', error)
+    // エラー時は失敗ステータスに更新
+    await client.query(`
+      UPDATE prtimes_uploads 
+      SET status = 'failed', progress_count = $2
+      WHERE id = $1
+    `, [uploadId, successCount + errorCount])
+  } finally {
+    client.release()
   }
 }

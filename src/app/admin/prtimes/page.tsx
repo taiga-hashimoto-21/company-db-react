@@ -159,28 +159,54 @@ export default function AdminPRTimesPage() {
   }, [])
 
   const monitorUploadProgress = useCallback(async (batchId: string) => {
+    console.log('🔄 Progress monitoring started for batchId:', batchId)
+    
     const checkProgress = async () => {
       try {
+        console.log('📡 Fetching progress for:', batchId)
         const response = await fetch(`/api/prtimes/progress/${batchId}`)
-        if (!response.ok) return
+        console.log('📡 Response status:', response.status)
+        
+        if (!response.ok) {
+          console.error('❌ Progress API error:', response.status)
+          return
+        }
         
         const progress = await response.json()
+        console.log('📊 Progress data:', progress)
         
         setUploadProgress(prev => ({
           ...prev,
           processed: progress.processed,
+          total: progress.total,
           errors: progress.errors
         }))
         
-        // まだ処理中なら続行
-        if (progress.status === 'processing' && progress.processed < progress.total) {
-          setTimeout(checkProgress, 1000) // 1秒後に再チェック
+        // まだ処理中なら続行（より頻繁にチェック）
+        if (progress.status === 'processing' || progress.processed < progress.total) {
+          setTimeout(checkProgress, 300) // 0.3秒後に再チェック（より高速）
         } else {
           // 完了時の処理
+          console.log('✅ Upload completed!')
+          const successCount = progress.success || 0
+          const errorCount = progress.errors || 0
+          
+          // 完了通知
+          if (successCount > 0) {
+            showNotification(`アップロード完了: 成功 ${successCount}件${errorCount > 0 ? `, エラー ${errorCount}件` : ''}`)
+          } else {
+            showNotification(`アップロード失敗: エラー ${errorCount}件`)
+          }
+          
+          // データ再読み込み
+          if (successCount > 0) {
+            await loadAllAdminData()
+            await fetchUploads()
+          }
+          
           setTimeout(() => {
             setUploadProgress(prev => ({ ...prev, show: false }))
-            fetchUploads() // アップロード履歴を更新
-          }, 2000) // 2秒後にプログレスバーを非表示
+          }, 3000) // 3秒後にプログレスバーを非表示
         }
       } catch (error) {
         console.error('Progress check error:', error)
@@ -262,23 +288,19 @@ export default function AdminPRTimesPage() {
       }
       
       const result = await response.json()
+      console.log('📤 Upload started:', result)
       
       // アップロード開始後、進捗を監視
       if (result.batchId) {
+        console.log('🎯 Starting progress monitoring for batchId:', result.batchId)
         monitorUploadProgress(result.batchId)
-      }
-      
-      setUploadResult(null) // アップロード結果表示をクリア
-      setSelectedFile(null)
-      
-      if (result.successCount > 0) {
-        // 全データを再読み込み
-        await loadAllAdminData()
-        await fetchUploads()
-        showNotification(`アップロード完了: 成功 ${result.successCount}件${result.errorCount > 0 ? `, エラー ${result.errorCount}件` : ''}`)
       } else {
-        showNotification(`アップロード失敗: エラー ${result.errorCount}件`)
+        console.error('❌ No batchId in upload result')
       }
+      
+      // 非同期処理のため、ここではファイル入力をクリアするのみ
+      setUploadResult(null)
+      setSelectedFile(null)
       
       const fileInput = document.getElementById('csvFile') as HTMLInputElement
       if (fileInput) fileInput.value = ''

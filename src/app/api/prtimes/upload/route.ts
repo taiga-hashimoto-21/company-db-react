@@ -206,18 +206,16 @@ export async function POST(request: NextRequest) {
             INSERT INTO prtimes_companies (
               delivery_date, press_release_url, press_release_title, press_release_category1,
               press_release_category2, company_name, company_website, business_category,
-              industry_category, sub_industry_category, capital_amount, listing_status,
-              press_release_type, address, phone_number, representative,
+              listing_status, press_release_type, address, phone_number, representative,
               capital_amount_text, established_date_text, capital_amount_numeric,
               established_year, established_month, batch_id
             ) VALUES (
-              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
+              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
             )
           `, [
             deliveryDate, pressReleaseUrl, pressReleaseTitle, pressReleaseCategory1,
             pressReleaseCategory2, companyName, companyWebsite, industry,
-            null, null, null, listingStatus,
-            pressReleaseType, address, phoneNumber, representative,
+            listingStatus, pressReleaseType, address, phoneNumber, representative,
             capitalAmountText, establishedDateText, capitalAmountNumeric,
             establishedYear, establishedMonth, batchId
           ])
@@ -227,6 +225,13 @@ export async function POST(request: NextRequest) {
           // カテゴリ更新は削除（処理を高速化）
           
           successCount++
+          
+          // 1行ごとに進捗を更新
+          await client.query(`
+            UPDATE prtimes_uploads 
+            SET progress_count = $1
+            WHERE id = $2
+          `, [successCount + errorCount, uploadId])
         } catch (rowError) {
           console.error(`Error processing row ${i}:`, rowError)
           console.error(`Row data:`, values || 'undefined')
@@ -234,6 +239,13 @@ export async function POST(request: NextRequest) {
           const safeValues = values || []
           errors.push(`行 ${i}: ${errorMessage} - データ: ${JSON.stringify(safeValues.slice(0, 5))}`)
           errorCount++
+          
+          // 1行ごとに進捗を更新
+          await client.query(`
+            UPDATE prtimes_uploads 
+            SET progress_count = $1
+            WHERE id = $2
+          `, [successCount + errorCount, uploadId])
         }
       }
       
@@ -241,9 +253,9 @@ export async function POST(request: NextRequest) {
       const status = errorCount === 0 ? 'completed' : (successCount > 0 ? 'partial' : 'failed')
       await client.query(`
         UPDATE prtimes_uploads 
-        SET success_records = $1, error_records = $2, status = $3
+        SET success_records = $1, error_records = $2, status = $3, progress_count = $5
         WHERE id = $4
-      `, [successCount, errorCount, status, uploadId])
+      `, [successCount, errorCount, status, uploadId, successCount + errorCount])
       
       return NextResponse.json({
         message: 'CSV upload completed',

@@ -33,6 +33,17 @@ export default function AdminPRTimesPage() {
     message: '',
     visible: false
   })
+  const [uploadProgress, setUploadProgress] = useState<{
+    show: boolean
+    processed: number
+    total: number
+    errors: number
+  }>({
+    show: false,
+    processed: 0,
+    total: 0,
+    errors: 0
+  })
 
   // ローディング中は何もしない
   const [isPageLoading, setIsPageLoading] = useState(true)
@@ -147,6 +158,39 @@ export default function AdminPRTimesPage() {
     }
   }, [])
 
+  const monitorUploadProgress = useCallback(async (batchId: string) => {
+    const checkProgress = async () => {
+      try {
+        const response = await fetch(`/api/prtimes/progress/${batchId}`)
+        if (!response.ok) return
+        
+        const progress = await response.json()
+        
+        setUploadProgress(prev => ({
+          ...prev,
+          processed: progress.processed,
+          errors: progress.errors
+        }))
+        
+        // まだ処理中なら続行
+        if (progress.status === 'processing' && progress.processed < progress.total) {
+          setTimeout(checkProgress, 1000) // 1秒後に再チェック
+        } else {
+          // 完了時の処理
+          setTimeout(() => {
+            setUploadProgress(prev => ({ ...prev, show: false }))
+            fetchUploads() // アップロード履歴を更新
+          }, 2000) // 2秒後にプログレスバーを非表示
+        }
+      } catch (error) {
+        console.error('Progress check error:', error)
+      }
+    }
+    
+    // 初回チェックを少し遅らせる
+    setTimeout(checkProgress, 500)
+  }, [fetchUploads])
+
   useEffect(() => {
     if (user && user.type === 'admin') {
       loadAllAdminData()
@@ -191,6 +235,19 @@ export default function AdminPRTimesPage() {
     }
 
     setUploading(true)
+    
+    // CSVの行数を事前に取得してプログレスバーの初期設定
+    const fileContent = await selectedFile.text()
+    const lines = fileContent.split('\n').filter(line => line.trim() !== '')
+    const totalRows = Math.max(0, lines.length - 2) // ヘッダーを除く
+    
+    setUploadProgress({
+      show: true,
+      processed: 0,
+      total: totalRows,
+      errors: 0
+    })
+    
     try {
       const formData = new FormData()
       formData.append('file', selectedFile)
@@ -205,6 +262,12 @@ export default function AdminPRTimesPage() {
       }
       
       const result = await response.json()
+      
+      // アップロード開始後、進捗を監視
+      if (result.batchId) {
+        monitorUploadProgress(result.batchId)
+      }
+      
       setUploadResult(null) // アップロード結果表示をクリア
       setSelectedFile(null)
       
@@ -324,6 +387,31 @@ export default function AdminPRTimesPage() {
                   </button>
                 </div>
               </div>
+              
+              {/* プログレスバー */}
+              {(uploading || uploadProgress.show) && (
+                <div className="mt-4">
+                  <div className="mb-2 flex justify-between text-sm">
+                    <span className="text-[var(--text-secondary)]">CSV処理中...</span>
+                    <span className="text-[var(--text-primary)]">
+                      {uploadProgress.processed} / {uploadProgress.total} 件 ({Math.round((uploadProgress.processed / uploadProgress.total) * 100)}%)
+                    </span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-lg h-3">
+                    <div 
+                      className="bg-[var(--primary)] h-3 rounded-lg transition-all duration-300 ease-out"
+                      style={{ 
+                        width: `${uploadProgress.total > 0 ? (uploadProgress.processed / uploadProgress.total) * 100 : 0}%` 
+                      }}
+                    ></div>
+                  </div>
+                  {uploadProgress.errors > 0 && (
+                    <div className="mt-2 text-sm text-red-600">
+                      エラー: {uploadProgress.errors} 件
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -341,13 +429,13 @@ export default function AdminPRTimesPage() {
               <table className="smarthr-table w-full" style={{ marginBottom: '0' }}>
                 <thead>
                   <tr className="border-b border-[var(--border-color)]">
-                    <th className="text-left py-3 px-4 font-medium">アップロード日時</th>
-                    <th className="text-left py-3 px-4 font-medium">ファイル名</th>
-                    <th className="text-left py-3 px-4 font-medium">総件数</th>
-                    <th className="text-left py-3 px-4 font-medium">成功</th>
-                    <th className="text-left py-3 px-4 font-medium">エラー</th>
-                    <th className="text-left py-3 px-4 font-medium">ステータス</th>
-                    <th className="text-left py-3 px-4 font-medium">操作</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '180px', minWidth: '180px', maxWidth: '180px' }}>アップロード日時</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '160px', minWidth: '160px', maxWidth: '160px' }}>ファイル名</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '80px', minWidth: '80px', maxWidth: '80px' }}>総件数</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '80px', minWidth: '80px', maxWidth: '80px' }}>成功</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '80px', minWidth: '80px', maxWidth: '80px' }}>エラー</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '90px', minWidth: '90px', maxWidth: '90px' }}>ステータス</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '80px', minWidth: '80px', maxWidth: '80px' }}>操作</th>
                   </tr>
                 </thead>
               </table>
@@ -374,28 +462,38 @@ export default function AdminPRTimesPage() {
                   ) : (
                     uploads.map((upload) => (
                       <tr key={upload.id} className="border-b border-[var(--border-color)] hover:bg-[var(--bg-secondary)]">
-                        <td className="py-4 px-4 text-sm">
-                          {new Date(upload.uploadDate).toLocaleString('ja-JP', {
-                            year: 'numeric',
-                            month: '2-digit', 
-                            day: '2-digit',
-                            hour: '2-digit',
-                            minute: '2-digit'
-                          })}
+                        <td className="py-4 px-4 text-sm text-left" style={{ width: '180px', minWidth: '180px', maxWidth: '180px' }}>
+                          <div className="truncate">
+                            {new Date(upload.uploadDate).toLocaleString('ja-JP', {
+                              year: 'numeric',
+                              month: '2-digit', 
+                              day: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </div>
                         </td>
-                        <td className="py-4 px-4 font-medium">
-                          {upload.filename}
+                        <td className="py-4 px-4 font-medium text-left" style={{ width: '160px', minWidth: '160px', maxWidth: '160px' }}>
+                          <div className="truncate" title={upload.filename}>
+                            {upload.filename}
+                          </div>
                         </td>
-                        <td className="py-4 px-4 text-sm">
-                          {upload.totalRecords}
+                        <td className="py-4 px-4 text-sm text-left" style={{ width: '80px', minWidth: '80px', maxWidth: '80px' }}>
+                          <div className="truncate">
+                            {upload.totalRecords}
+                          </div>
                         </td>
-                        <td className="py-4 px-4 text-sm">
-                          <span className="text-green-600">{upload.successRecords || 0}</span>
+                        <td className="py-4 px-4 text-sm text-left" style={{ width: '80px', minWidth: '80px', maxWidth: '80px' }}>
+                          <div className="truncate">
+                            <span className="text-green-600">{upload.successRecords || 0}</span>
+                          </div>
                         </td>
-                        <td className="py-4 px-4 text-sm">
-                          <span className="text-red-600">{upload.errorRecords || 0}</span>
+                        <td className="py-4 px-4 text-sm text-left" style={{ width: '80px', minWidth: '80px', maxWidth: '80px' }}>
+                          <div className="truncate">
+                            <span className="text-red-600">{upload.errorRecords || 0}</span>
+                          </div>
                         </td>
-                        <td className="py-4 px-4">
+                        <td className="py-4 px-4 text-left" style={{ width: '90px', minWidth: '90px', maxWidth: '90px' }}>
                           <span className={`px-2 py-1 rounded text-xs ${
                             upload.status === 'completed' ? 'bg-green-100 text-green-800' :
                             upload.status === 'partial' ? 'bg-yellow-100 text-yellow-800' :
@@ -407,11 +505,11 @@ export default function AdminPRTimesPage() {
                              upload.status === 'failed' ? '失敗' : '処理中'}
                           </span>
                         </td>
-                        <td className="py-4 px-4">
+                        <td className="py-4 px-4 text-left" style={{ width: '80px', minWidth: '80px', maxWidth: '80px' }}>
                           <button
                             onClick={() => handleDeleteUpload(upload.batchId, upload.filename)}
-                            style={{ padding: '7px 15px', height: '35px' }}
-                            className="smarthr-button bg-red-500 text-white border-transparent hover:bg-red-600 text-sm"
+                            style={{ padding: '3px 15px', height: '25px', fontSize: '12px' }}
+                            className="smarthr-button bg-red-500 text-white border-transparent hover:bg-red-600"
                             title={`このアップロード（${upload.filename}）のデータのみを削除します`}
                           >
                             削除

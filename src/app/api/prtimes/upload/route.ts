@@ -107,6 +107,7 @@ export async function POST(request: NextRequest) {
       // トランザクション削除（処理を高速化）
       
       // バッチIDを生成してアップロード履歴を記録
+      const batchId = 'batch_' + Date.now()
       const batchResult = await client.query(`
         INSERT INTO prtimes_uploads (filename, total_records, file_size_kb, uploaded_by, batch_id, status)
         VALUES ($1, $2, $3, $4, $5, 'processing')
@@ -116,11 +117,11 @@ export async function POST(request: NextRequest) {
         lines.length - 2, // ヘッダー行を除く
         Math.round(file.size / 1024),
         'admin', // TODO: 実際のユーザー名を使用
-        'batch_' + Date.now() // 簡易的なbatch_id生成
+        batchId
       ])
       
       const uploadId = batchResult.rows[0].id
-      const batchId = batchResult.rows[0].batch_id
+      const returnedBatchId = batchResult.rows[0].batch_id
       
       let successCount = 0
       let errorCount = 0
@@ -203,20 +204,22 @@ export async function POST(request: NextRequest) {
           
           const insertResult = await client.query(`
             INSERT INTO prtimes_companies (
-              delivery_date, press_release_url, press_release_title, press_release_type,
-              press_release_category1, press_release_category2, company_name,
-              company_website, business_category, address,
-              phone_number, representative, listing_status, capital_amount_text,
-              established_date_text, capital_amount_numeric, established_year, established_month
+              delivery_date, press_release_url, press_release_title, press_release_category1,
+              press_release_category2, company_name, company_website, business_category,
+              industry_category, sub_industry_category, capital_amount, listing_status,
+              press_release_type, address, phone_number, representative,
+              capital_amount_text, established_date_text, capital_amount_numeric,
+              established_year, established_month
             ) VALUES (
-              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
+              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
             )
           `, [
-            deliveryDate, pressReleaseUrl, pressReleaseTitle, pressReleaseType,
-            pressReleaseCategory1, pressReleaseCategory2, companyName,
-            companyWebsite, industry, address,
-            phoneNumber, representative, listingStatus, capitalAmountText,
-            establishedDateText, capitalAmountNumeric, establishedYear, establishedMonth
+            deliveryDate, pressReleaseUrl, pressReleaseTitle, pressReleaseCategory1,
+            pressReleaseCategory2, companyName, companyWebsite, industry,
+            null, null, null, listingStatus,
+            pressReleaseType, address, phoneNumber, representative,
+            capitalAmountText, establishedDateText, capitalAmountNumeric,
+            establishedYear, establishedMonth
           ])
           
           console.log(`Inserted row ${i}: ${companyName}`)

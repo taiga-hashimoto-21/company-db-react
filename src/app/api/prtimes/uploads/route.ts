@@ -62,12 +62,11 @@ export async function DELETE(request: NextRequest) {
     try {
       await client.query('BEGIN')
       
-      // バッチに関連するデータを削除（upload_batch_idカラムがないため一時的に無効化）
-      // const companiesResult = await client.query(
-      //   'DELETE FROM prtimes_companies WHERE upload_batch_id = $1',
-      //   [batchId]
-      // )
-      const companiesResult = { rowCount: 0 }
+      // バッチに関連するデータを削除
+      const companiesResult = await client.query(
+        'DELETE FROM prtimes_companies WHERE batch_id = $1',
+        [batchId]
+      )
       
       const uploadsResult = await client.query(
         'DELETE FROM prtimes_uploads WHERE batch_id = $1',

@@ -209,9 +209,9 @@ export async function POST(request: NextRequest) {
               industry_category, sub_industry_category, capital_amount, listing_status,
               press_release_type, address, phone_number, representative,
               capital_amount_text, established_date_text, capital_amount_numeric,
-              established_year, established_month
+              established_year, established_month, batch_id
             ) VALUES (
-              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
+              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
             )
           `, [
             deliveryDate, pressReleaseUrl, pressReleaseTitle, pressReleaseCategory1,
@@ -219,7 +219,7 @@ export async function POST(request: NextRequest) {
             null, null, null, listingStatus,
             pressReleaseType, address, phoneNumber, representative,
             capitalAmountText, establishedDateText, capitalAmountNumeric,
-            establishedYear, establishedMonth
+            establishedYear, establishedMonth, batchId
           ])
           
           console.log(`Inserted row ${i}: ${companyName}`)

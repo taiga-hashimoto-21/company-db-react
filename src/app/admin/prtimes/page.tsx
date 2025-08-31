@@ -228,13 +228,13 @@ export default function AdminPRTimesPage() {
     }
   }
 
-  const handleDeleteUpload = async (uploadId: string, filename: string) => {
-    if (!confirm(`「${filename}」のアップロードデータを削除してもよろしいですか？\nこの操作は取り消せません。`)) {
+  const handleDeleteUpload = async (batchId: string, filename: string) => {
+    if (!confirm(`「${filename}」のアップロードデータを削除してもよろしいですか？\nこのバッチのデータのみが削除されます。この操作は取り消せません。`)) {
       return
     }
 
     try {
-      const response = await fetch(`/api/uploads/${uploadId}`, {
+      const response = await fetch(`/api/prtimes/uploads?batchId=${encodeURIComponent(batchId)}`, {
         method: 'DELETE'
       })
       
@@ -243,7 +243,7 @@ export default function AdminPRTimesPage() {
       }
       
       const result = await response.json()
-      showNotification(`削除完了: ${result.deletedRecords}件のデータを削除しました`)
+      showNotification(`削除完了: ${result.deletedCompanies}件の企業データと履歴を削除しました`)
       
       await fetchUploads()
       // 全データを再読み込み
@@ -332,7 +332,7 @@ export default function AdminPRTimesPage() {
           <div className="mb-6">
             <h2 className="text-xl font-semibold text-[var(--text-primary)] mb-2">アップロード履歴</h2>
             <p className="text-sm text-[var(--text-secondary)]">
-              過去のCSVアップロード履歴を確認できます（削除機能はデータ保護のため無効化されています）
+              過去のCSVアップロード履歴を確認・削除できます。削除は該当バッチのデータのみが対象となります。
             </p>
           </div>
           <div>
@@ -409,12 +409,12 @@ export default function AdminPRTimesPage() {
                         </td>
                         <td className="py-4 px-4">
                           <button
-                            disabled
-                            title="削除機能は現在無効化されています（データ保護のため）"
+                            onClick={() => handleDeleteUpload(upload.batchId, upload.filename)}
                             style={{ padding: '7px 15px', height: '35px' }}
-                            className="smarthr-button bg-gray-400 text-gray-600 border-transparent cursor-not-allowed text-sm"
+                            className="smarthr-button bg-red-500 text-white border-transparent hover:bg-red-600 text-sm"
+                            title={`このアップロード（${upload.filename}）のデータのみを削除します`}
                           >
-                            削除不可
+                            削除
                           </button>
                         </td>
                       </tr>

@@ -54,6 +54,24 @@ async function migratePRTimesDatabase() {
         UNIQUE(category_type, category_name)
       )
     `)
+
+    console.log('Creating PR TIMES upload history table...')
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS prtimes_uploads (
+        id BIGSERIAL PRIMARY KEY,
+        batch_id UUID DEFAULT gen_random_uuid(),
+        filename VARCHAR(255) NOT NULL,
+        total_records INTEGER NOT NULL DEFAULT 0,
+        successful_records INTEGER DEFAULT 0,
+        failed_records INTEGER DEFAULT 0,
+        file_size_kb INTEGER,
+        uploaded_by VARCHAR(100),
+        status VARCHAR(20) DEFAULT 'processing' CHECK (status IN ('processing', 'completed', 'failed', 'cancelled')),
+        error_message TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      )
+    `)
     
     console.log('Creating indexes...')
     const indexes = [
@@ -69,7 +87,9 @@ async function migratePRTimesDatabase() {
       'CREATE INDEX IF NOT EXISTS idx_prtimes_capital_year ON prtimes_data(capital_amount_numeric, established_year)',
       'CREATE INDEX IF NOT EXISTS idx_prtimes_business_capital ON prtimes_data(business_category, capital_amount_numeric)',
       'CREATE INDEX IF NOT EXISTS idx_prtimes_categories_type ON prtimes_categories(category_type)',
-      'CREATE INDEX IF NOT EXISTS idx_prtimes_categories_active ON prtimes_categories(is_active)'
+      'CREATE INDEX IF NOT EXISTS idx_prtimes_categories_active ON prtimes_categories(is_active)',
+      'CREATE INDEX IF NOT EXISTS idx_prtimes_uploads_status ON prtimes_uploads(status)',
+      'CREATE INDEX IF NOT EXISTS idx_prtimes_uploads_created ON prtimes_uploads(created_at)'
     ]
     
     for (const indexQuery of indexes) {
@@ -93,6 +113,12 @@ async function migratePRTimesDatabase() {
     await client.query(`
       CREATE TRIGGER update_prtimes_data_updated_at 
       BEFORE UPDATE ON prtimes_data 
+      FOR EACH ROW EXECUTE FUNCTION update_updated_at()
+    `)
+    
+    await client.query(`
+      CREATE TRIGGER update_prtimes_uploads_updated_at 
+      BEFORE UPDATE ON prtimes_uploads 
       FOR EACH ROW EXECUTE FUNCTION update_updated_at()
     `)
     
@@ -120,10 +146,12 @@ async function migratePRTimesDatabase() {
     
     const companyCount = await client.query('SELECT COUNT(*) FROM prtimes_data')
     const categoryCount = await client.query('SELECT COUNT(*) FROM prtimes_categories')
+    const uploadCount = await client.query('SELECT COUNT(*) FROM prtimes_uploads')
     
     console.log(`📊 Current data:`)
     console.log(`   - Companies: ${companyCount.rows[0].count}`)
     console.log(`   - Categories: ${categoryCount.rows[0].count}`)
+    console.log(`   - Upload History: ${uploadCount.rows[0].count}`)
     
   } catch (error) {
     if (client) {

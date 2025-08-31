@@ -108,14 +108,15 @@ export async function POST(request: NextRequest) {
       
       // バッチIDを生成してアップロード履歴を記録
       const batchResult = await client.query(`
-        INSERT INTO prtimes_uploads (filename, total_records, file_size_kb, uploaded_by, status)
-        VALUES ($1, $2, $3, $4, 'processing')
+        INSERT INTO prtimes_uploads (filename, total_records, file_size_kb, uploaded_by, batch_id, status)
+        VALUES ($1, $2, $3, $4, $5, 'processing')
         RETURNING id, batch_id
       `, [
         file.name,
         lines.length - 2, // ヘッダー行を除く
         Math.round(file.size / 1024),
-        'admin' // TODO: 実際のユーザー名を使用
+        'admin', // TODO: 実際のユーザー名を使用
+        'batch_' + Date.now() // 簡易的なbatch_id生成
       ])
       
       const uploadId = batchResult.rows[0].id

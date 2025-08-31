@@ -3,11 +3,13 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 
 interface User {
-  id: number
+  id: string
   username: string
   name: string
+  companyName?: string
+  phoneNumber?: string
   email?: string
-  type: 'admin' | 'user'
+  type: 'admin' | 'user' | 'disabled'
   lastLogin?: string
 }
 
@@ -21,42 +23,27 @@ interface LoginRequest {
   password: string
 }
 
+interface CreateUserRequest {
+  username: string
+  name: string
+  companyName?: string
+  phoneNumber?: string
+  email?: string
+  type: 'admin' | 'user' | 'disabled'
+  password: string
+}
+
 interface AuthContextType extends AuthState {
   login: (credentials: LoginRequest) => Promise<boolean>
   logout: () => void
-  createUser: (userData: Omit<User, 'id'>, password: string) => boolean
-  updateUser: (userId: number, updates: Partial<User>) => boolean
-  updatePassword: (userId: number, newPassword: string) => boolean
-  deleteUser: (userId: number) => boolean
-  getAllUsers: () => User[]
-  getUserPassword: (username: string) => string | null
+  createUser: (userData: CreateUserRequest) => Promise<boolean>
+  updateUser: (userId: string, updates: Partial<User>) => Promise<boolean>
+  updatePassword: (userId: string, newPassword: string) => Promise<boolean>
+  deleteUser: (userId: string) => Promise<boolean>
+  getAllUsers: () => Promise<User[]>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
-
-// デフォルトユーザー（実際の運用では削除）
-const defaultUsers: User[] = [
-  {
-    id: 1,
-    username: 'admin',
-    name: 'システム管理者',
-    email: 'admin@company-db.local',
-    type: 'admin'
-  },
-  {
-    id: 2,
-    username: 'user1',
-    name: '一般ユーザー',
-    email: 'user1@company-db.local',
-    type: 'user'
-  }
-]
-
-// デフォルトパスワード（実際の運用では削除）
-const defaultPasswords: Record<string, string> = {
-  'admin': 'admin123',
-  'user1': 'user123'
-}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [authState, setAuthState] = useState<AuthState>({
@@ -64,54 +51,57 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user: null
   })
 
-  // 初期化
+  // 初期化時にlocalStorageから認証状態を復元
   useEffect(() => {
-    const existingUsers = localStorage.getItem('users')
-    console.log('Existing users in localStorage:', existingUsers)
-    if (!existingUsers) {
-      console.log('Setting default users and passwords')
-      localStorage.setItem('users', JSON.stringify(defaultUsers))
-      localStorage.setItem('passwords', JSON.stringify(defaultPasswords))
-    }
-
-    // 認証状態の復元
     const storedAuth = localStorage.getItem('authState')
     if (storedAuth) {
-      const parsed = JSON.parse(storedAuth)
-      setAuthState(parsed)
+      try {
+        const parsed = JSON.parse(storedAuth)
+        setAuthState(parsed)
+      } catch (error) {
+        console.error('Error parsing stored auth state:', error)
+        localStorage.removeItem('authState')
+      }
     }
   }, [])
 
   const login = async (credentials: LoginRequest): Promise<boolean> => {
-    const users: User[] = JSON.parse(localStorage.getItem('users') || '[]')
-    const passwords: Record<string, string> = JSON.parse(localStorage.getItem('passwords') || '{}')
-    
-    console.log('Login attempt:', credentials)
-    console.log('Available users:', users)
-    console.log('Available passwords:', passwords)
-    
-    const user = users.find(u => u.username === credentials.username)
-    console.log('Found user:', user)
-    
-    if (user && passwords[credentials.username] === credentials.password) {
-      // 最終ログイン時刻更新
-      user.lastLogin = new Date().toISOString()
-      
-      const newAuthState = {
-        isAuthenticated: true,
-        user
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(credentials),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        console.error('Login failed:', errorData.error)
+        return false
       }
-      setAuthState(newAuthState)
-      localStorage.setItem('authState', JSON.stringify(newAuthState))
+
+      const data = await response.json()
       
-      // ユーザー情報更新
-      const updatedUsers = users.map(u => u.id === user.id ? user : u)
-      localStorage.setItem('users', JSON.stringify(updatedUsers))
-      
-      return true
+      if (data.success && data.user) {
+        const newAuthState = {
+          isAuthenticated: true,
+          user: {
+            ...data.user,
+            lastLogin: new Date().toISOString()
+          }
+        }
+        
+        setAuthState(newAuthState)
+        localStorage.setItem('authState', JSON.stringify(newAuthState))
+        return true
+      }
+
+      return false
+    } catch (error) {
+      console.error('Login error:', error)
+      return false
     }
-    
-    return false
   }
 
   const logout = () => {
@@ -122,77 +112,126 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('authState')
   }
 
-  const createUser = (userData: Omit<User, 'id'>, password: string): boolean => {
-    if (authState.user?.type !== 'admin') return false
+  const createUser = async (userData: CreateUserRequest): Promise<boolean> => {
+    try {
+      const response = await fetch('/api/users', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(userData),
+      })
 
-    const users: User[] = JSON.parse(localStorage.getItem('users') || '[]')
-    const passwords: Record<string, string> = JSON.parse(localStorage.getItem('passwords') || '{}')
-    
-    // ユーザー名重複チェック
-    if (users.some(u => u.username === userData.username)) {
+      if (!response.ok) {
+        const errorData = await response.json()
+        console.error('Create user failed:', errorData.error)
+        return false
+      }
+
+      const data = await response.json()
+      return data.success === true
+    } catch (error) {
+      console.error('Create user error:', error)
       return false
     }
+  }
 
-    const newUser: User = {
-      ...userData,
-      id: Math.max(...users.map(u => u.id)) + 1
+  const updateUser = async (userId: string, updates: Partial<User>): Promise<boolean> => {
+    try {
+      const response = await fetch(`/api/users/${userId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(updates),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        console.error('Update user failed:', errorData.error)
+        return false
+      }
+
+      const data = await response.json()
+      
+      // 現在ログイン中のユーザーが無効化された場合はログアウト
+      if (authState.user?.id === userId && updates.type === 'disabled') {
+        logout()
+      }
+      
+      return data.success === true
+    } catch (error) {
+      console.error('Update user error:', error)
+      return false
     }
-
-    const updatedUsers = [...users, newUser]
-    passwords[userData.username] = password
-    
-    localStorage.setItem('users', JSON.stringify(updatedUsers))
-    localStorage.setItem('passwords', JSON.stringify(passwords))
-    
-    return true
   }
 
-  const updatePassword = (userId: number, newPassword: string): boolean => {
-    if (authState.user?.type !== 'admin') return false
+  const updatePassword = async (userId: string, newPassword: string): Promise<boolean> => {
+    try {
+      const response = await fetch(`/api/users/${userId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ password: newPassword }),
+      })
 
-    const users: User[] = JSON.parse(localStorage.getItem('users') || '[]')
-    const passwords: Record<string, string> = JSON.parse(localStorage.getItem('passwords') || '{}')
-    
-    const user = users.find(u => u.id === userId)
-    if (!user) return false
+      if (!response.ok) {
+        const errorData = await response.json()
+        console.error('Update password failed:', errorData.error)
+        return false
+      }
 
-    passwords[user.username] = newPassword
-    localStorage.setItem('passwords', JSON.stringify(passwords))
-    
-    return true
+      const data = await response.json()
+      return data.success === true
+    } catch (error) {
+      console.error('Update password error:', error)
+      return false
+    }
   }
 
-  const updateUser = (userId: number, updates: Partial<User>): boolean => {
-    if (authState.user?.type !== 'admin') return false
+  const deleteUser = async (userId: string): Promise<boolean> => {
+    try {
+      const response = await fetch(`/api/users/${userId}`, {
+        method: 'DELETE',
+      })
 
-    const users: User[] = JSON.parse(localStorage.getItem('users') || '[]')
-    const userIndex = users.findIndex(u => u.id === userId)
-    
-    if (userIndex === -1) return false
+      if (!response.ok) {
+        const errorData = await response.json()
+        console.error('Delete user failed:', errorData.error)
+        return false
+      }
 
-    users[userIndex] = { ...users[userIndex], ...updates }
-    localStorage.setItem('users', JSON.stringify(users))
-    return true
+      const data = await response.json()
+      
+      // 削除されたユーザーがログイン中の場合はログアウト
+      if (authState.user?.id === userId) {
+        logout()
+      }
+      
+      return data.success === true
+    } catch (error) {
+      console.error('Delete user error:', error)
+      return false
+    }
   }
 
-  const deleteUser = (userId: number): boolean => {
-    if (authState.user?.type !== 'admin') return false
+  const getAllUsers = async (): Promise<User[]> => {
+    try {
+      const response = await fetch('/api/users')
 
-    const users: User[] = JSON.parse(localStorage.getItem('users') || '[]')
-    const updatedUsers = users.filter(u => u.id !== userId)
-    localStorage.setItem('users', JSON.stringify(updatedUsers))
-    return true
-  }
+      if (!response.ok) {
+        const errorData = await response.json()
+        console.error('Get users failed:', errorData.error)
+        return []
+      }
 
-  const getAllUsers = (): User[] => {
-    if (authState.user?.type !== 'admin') return []
-    return JSON.parse(localStorage.getItem('users') || '[]')
-  }
-
-  const getUserPassword = (username: string): string | null => {
-    if (authState.user?.type !== 'admin') return null
-    const passwords: Record<string, string> = JSON.parse(localStorage.getItem('passwords') || '{}')
-    return passwords[username] || null
+      const data = await response.json()
+      return data.users || []
+    } catch (error) {
+      console.error('Get users error:', error)
+      return []
+    }
   }
 
   const contextValue: AuthContextType = {
@@ -204,7 +243,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     updatePassword,
     deleteUser,
     getAllUsers,
-    getUserPassword
   }
 
   return (

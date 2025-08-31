@@ -120,15 +120,6 @@ export function Header({ title, user, onLogout, children }: HeaderProps) {
               </Link>
             </nav>
             
-            {/* ログアウトボタン */}
-            {onLogout && (
-              <button
-                onClick={onLogout}
-                className="px-4 py-2 text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--primary)] transition-colors"
-              >
-                ログアウト
-              </button>
-            )}
           </div>
         </div>
       </div>

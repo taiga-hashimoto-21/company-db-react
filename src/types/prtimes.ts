@@ -3,6 +3,7 @@ export interface PRTimesCompany {
   deliveryDate: string
   pressReleaseUrl: string
   pressReleaseTitle: string
+  pressReleaseType?: string
   pressReleaseCategory1?: string
   pressReleaseCategory2?: string
   companyName: string
@@ -24,8 +25,7 @@ export interface PRTimesCompany {
 export interface PRTimesSearchFilters {
   companyName?: string
   industry?: string[]
-  pressReleaseCategory1?: string[]
-  pressReleaseCategory2?: string[]
+  pressReleaseType?: string[]
   listingStatus?: string[]
   capitalMin?: number
   capitalMax?: number

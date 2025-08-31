@@ -23,8 +23,7 @@ export async function POST(request: NextRequest) {
     const {
       companyName,
       industry,
-      pressReleaseCategory1,
-      pressReleaseCategory2,
+      pressReleaseType,
       listingStatus,
       capitalMin,
       capitalMax,
@@ -53,20 +52,14 @@ export async function POST(request: NextRequest) {
     }
 
     if (industry && industry.length > 0) {
-      conditions.push(`industry = ANY($${paramIndex})`)
+      conditions.push(`business_category = ANY($${paramIndex})`)
       params.push(industry)
       paramIndex++
     }
 
-    if (pressReleaseCategory1 && pressReleaseCategory1.length > 0) {
-      conditions.push(`press_release_category1 = ANY($${paramIndex})`)
-      params.push(pressReleaseCategory1)
-      paramIndex++
-    }
-
-    if (pressReleaseCategory2 && pressReleaseCategory2.length > 0) {
-      conditions.push(`press_release_category2 = ANY($${paramIndex})`)
-      params.push(pressReleaseCategory2)
+    if (pressReleaseType && pressReleaseType.length > 0) {
+      conditions.push(`press_release_type = ANY($${paramIndex})`)
+      params.push(pressReleaseType)
       paramIndex++
     }
 
@@ -148,7 +141,7 @@ export async function POST(request: NextRequest) {
           pressReleaseCategory2: row.press_release_category2,
           companyName: row.company_name,
           companyWebsite: row.company_website,
-          industry: row.industry,
+          industry: row.business_category,
           address: row.address,
           phoneNumber: row.phone_number,
           representative: row.representative,

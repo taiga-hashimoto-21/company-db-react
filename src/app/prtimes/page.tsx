@@ -7,6 +7,7 @@ import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { Header } from '@/components/ui/Header'
 import { Pagination } from '@/components/ui/Pagination'
 import { PRTimesSearch } from '@/components/ui/PRTimesSearch'
+import { CheckboxGroup } from '@/components/ui/CheckboxGroup'
 import { PRTimesCompany, PRTimesSearchFilters, PRTimesSearchResponse } from '@/types/prtimes'
 import { useAuth } from '@/contexts/AuthContext'
 import { formatNumber, logPerformance, downloadCSV } from '@/lib/utils'
@@ -37,6 +38,7 @@ export default function PRTimesPage() {
     message: '',
     visible: false
   })
+  
 
   // ローディング中は何もしない
   const [isLoading, setIsLoading] = useState(true)
@@ -234,6 +236,7 @@ export default function PRTimesPage() {
     }).join('\n')
   }, [displayCompanies, copyFormat])
 
+  
   useEffect(() => {
     if (user) {
       const defaultFilters: PRTimesSearchFilters = {}

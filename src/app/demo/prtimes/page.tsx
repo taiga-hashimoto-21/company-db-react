@@ -154,15 +154,17 @@ export default function DemoPRTimesPage() {
         newCompanies = newCompanies.slice(0, 100 - currentTotal)
       }
       
+      let updatedTableCompanies
       if (append) {
-        setTableCompanies(prev => [...prev, ...newCompanies])
+        updatedTableCompanies = [...tableCompanies, ...newCompanies].slice(0, 100)
+        setTableCompanies(updatedTableCompanies)
       } else {
-        setTableCompanies(newCompanies)
+        updatedTableCompanies = newCompanies.slice(0, 100)
+        setTableCompanies(updatedTableCompanies)
       }
       
-      // 100件に達したか、これ以上データがない場合は無限スクロールを停止
-      const totalAfterLoad = (append ? tableCompanies.length : 0) + newCompanies.length
-      setHasMoreTableData(data.pagination.hasNextPage && totalAfterLoad < 100)
+      // 100件に達したら無限スクロールを停止
+      setHasMoreTableData(updatedTableCompanies.length < 100 && data.pagination.hasNextPage)
       
     } catch (error) {
       console.error('Table data loading error:', error)
@@ -387,8 +389,30 @@ export default function DemoPRTimesPage() {
               </div>
             </div>
             
-            <div className="flex items-center gap-4">
-              <span className="text-sm text-gray-600">最大100件まで表示</span>
+            <div className="flex items-center gap-6">
+              <nav className="flex items-center gap-6" style={{ padding: '8px' }}>
+                <Link 
+                  href="/login"
+                  className="text-sm font-medium text-black transition-colors hover:text-[var(--primary)]"
+                >
+                  ログイン
+                </Link>
+              </nav>
+              
+              <button
+                onClick={() => window.open('https://approach-robo.com/#price', '_blank')}
+                className="text-white text-sm font-medium transition-colors cursor-pointer"
+                style={{ 
+                  padding: '7px 35px', 
+                  borderRadius: '100px', 
+                  backgroundColor: '#0f7f85ff',
+                  border: 'none'
+                }}
+                onMouseEnter={(e) => e.target.style.backgroundColor = '#0d6b70'}
+                onMouseLeave={(e) => e.target.style.backgroundColor = '#0f7f85ff'}
+              >
+                有料プランに移行
+              </button>
             </div>
           </div>
         </div>
@@ -526,7 +550,7 @@ export default function DemoPRTimesPage() {
                       </td>
                     </tr>
                   ) : (
-                    tableCompanies.map((company, index) => (
+                    tableCompanies.slice(0, 100).map((company, index) => (
                       <tr key={company.id}>
                         <td>
                           {company.companyWebsite ? (

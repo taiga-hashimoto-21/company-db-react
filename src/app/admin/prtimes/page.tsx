@@ -114,7 +114,9 @@ export default function AdminPRTimesPage() {
     
     allCompanies.forEach(company => {
       // 会社名とホームページURLのみで重複除去
-      const key = `${company.companyWebsite || 'no-website'}_${company.companyName}`
+      const websiteKey = company.companyWebsite?.trim() || 'no-website'
+      const companyNameKey = company.companyName?.trim() || 'no-name'
+      const key = `${websiteKey}_${companyNameKey}`
       
       if (!uniqueCompaniesMap.has(key)) {
         uniqueCompaniesMap.set(key, [])
@@ -127,7 +129,7 @@ export default function AdminPRTimesPage() {
         new Date(b.deliveryDate).getTime() - new Date(a.deliveryDate).getTime()
       )
       return { ...sortedCompanies[0], pressReleaseCount: companyGroup.length }
-    })
+    }).sort((a, b) => a.companyName.localeCompare(b.companyName))
   }, [allCompanies])
 
   const fetchUploads = useCallback(async () => {
@@ -427,7 +429,7 @@ export default function AdminPRTimesPage() {
         <div className="smarthr-card w-full">
           <div className="mb-6">
             <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-1">
-              登録済みデータ ({loading ? '読み込み中...' : `${formatNumber(displayCompanies.length)}件`})
+              登録済みデータ ({loading ? '読み込み中...' : `ユニーク企業${formatNumber(displayCompanies.length)}件 / 全${formatNumber(totalCount)}件`})
             </h2>
           </div>
           <div>
@@ -488,9 +490,9 @@ export default function AdminPRTimesPage() {
                             {company.establishedYear || '-'}年
                           </td>
                           <td className="py-4 px-4 text-sm">
-                            {company.industry ? (
+                            {company.businessCategory || company.industryCategory ? (
                               <span className="bg-[var(--bg-light)] px-2 py-1 rounded text-xs">
-                                {company.industry}
+                                {company.businessCategory || company.industryCategory}
                               </span>
                             ) : '-'}
                           </td>

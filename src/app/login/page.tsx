@@ -103,6 +103,14 @@ export default function LoginPage() {
               </Button>
             </form>
 
+            <div className="text-center mt-6">
+              <button
+                onClick={() => router.push('/demo/prtimes')}
+                className="text-[var(--primary)] hover:text-[var(--primary-hover)] text-sm underline transition-colors"
+              >
+                デモ画面を見る
+              </button>
+            </div>
             
           </CardBody>
         </Card>

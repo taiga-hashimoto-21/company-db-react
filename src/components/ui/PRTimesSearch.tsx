@@ -19,8 +19,7 @@ export function PRTimesSearch({ onSearch, onReset, loading, realtime = true }: P
   const [filters, setFilters] = useState<PRTimesSearchFilters>({
     companyName: '',
     industry: [],
-    pressReleaseCategory1: [],
-    pressReleaseCategory2: [],
+    pressReleaseType: [],
     listingStatus: [],
     capitalMin: undefined,
     capitalMax: undefined,
@@ -32,13 +31,11 @@ export function PRTimesSearch({ onSearch, onReset, loading, realtime = true }: P
 
   const [categories, setCategories] = useState<{
     industry: string[]
-    category1: string[]
-    category2: string[]
+    pressReleaseTypes: string[]
     listing_status: string[]
   }>({
     industry: [],
-    category1: [],
-    category2: [],
+    pressReleaseTypes: [],
     listing_status: []
   })
 
@@ -66,10 +63,9 @@ export function PRTimesSearch({ onSearch, onReset, loading, realtime = true }: P
         if (response.ok) {
           const data = await response.json()
           setCategories({
-            industry: data.industry || [],
-            category1: data.category1 || [],
-            category2: data.category2 || [],
-            listing_status: data.listing_status || []
+            industry: data.industries || [],
+            pressReleaseTypes: data.pressReleaseTypes || [],
+            listing_status: data.listingStatuses || []
           })
         }
       } catch (error) {
@@ -96,8 +92,7 @@ export function PRTimesSearch({ onSearch, onReset, loading, realtime = true }: P
     const resetFilters: PRTimesSearchFilters = {
       companyName: '',
       industry: [],
-      pressReleaseCategory1: [],
-      pressReleaseCategory2: [],
+      pressReleaseType: [],
       listingStatus: [],
       capitalMin: undefined,
       capitalMax: undefined,
@@ -213,11 +208,11 @@ export function PRTimesSearch({ onSearch, onReset, loading, realtime = true }: P
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-[var(--text-primary)] mb-3">プレスリリースカテゴリ</label>
+          <label className="block text-sm font-medium text-[var(--text-primary)] mb-3">プレスリリース種類</label>
           <CheckboxGroup
-            options={categories.category1}
-            selectedValues={filters.pressReleaseCategory1 || []}
-            onChange={(values) => handleArrayChange('pressReleaseCategory1', values)}
+            options={categories.pressReleaseTypes}
+            selectedValues={filters.pressReleaseType || []}
+            onChange={(values) => handleArrayChange('pressReleaseType', values)}
             disabled={loading}
             maxHeight="200px"
           />

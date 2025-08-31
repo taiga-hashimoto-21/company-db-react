@@ -68,13 +68,14 @@ async function updateCategories(client: any, categoryType: string, categoryName:
   
   try {
     await client.query(`
-      INSERT INTO prtimes_categories (category_type, category_name, usage_count) 
-      VALUES ($1, $2, 1)
-      ON CONFLICT (category_type, category_name) 
-      DO UPDATE SET usage_count = prtimes_categories.usage_count + 1
+      INSERT INTO prtimes_categories (category_type, category_name) 
+      VALUES ($1, $2)
     `, [categoryType, categoryName.trim()])
   } catch (error) {
-    console.error(`Error updating category ${categoryType}:`, error)
+    // 重複エラーは無視
+    if (!error.message.includes('duplicate key')) {
+      console.error(`Error updating category ${categoryType}:`, error)
+    }
   }
 }
 
@@ -103,7 +104,7 @@ export async function POST(request: NextRequest) {
     const client = await pool.connect()
     
     try {
-      await client.query('BEGIN')
+      // トランザクション削除（処理を高速化）
       
       // バッチIDを生成してアップロード履歴を記録
       const batchResult = await client.query(`
@@ -125,11 +126,14 @@ export async function POST(request: NextRequest) {
       const errors: string[] = []
       
       for (let i = 2; i < lines.length; i++) {
+        let values: string[] = []
         try {
-          const values = parseCSVLine(lines[i])
+          values = parseCSVLine(lines[i])
           
-          if (values.length < 17) {
-            errors.push(`行 ${i}: 列数が不足しています (${values.length}/17以上)`)
+          console.log(`Row ${i}: ${values.length} columns - ${values.slice(0, 3)}`)
+          
+          if (values.length < 10) {
+            errors.push(`行 ${i}: 列数が不足しています (${values.length}/10以上)`)
             errorCount++
             continue
           }
@@ -149,16 +153,16 @@ export async function POST(request: NextRequest) {
             // 日付が空の場合は現在時刻を使用
             deliveryDate = new Date().toISOString()
           }
-          // 文字数制限を適用して安全に格納（実際のCSVに合わせて調整）
+          // 文字数制限を適用して安全に格納（CSVの正しい列順序に合わせて調整）
           const pressReleaseUrl = (values[1] || '').substring(0, 1000)
           const pressReleaseTitle = values[2] || ''
-          const pressReleaseCategory1 = (values[3] || '').substring(0, 100) || null
-          const pressReleaseCategory2 = (values[4] || '').substring(0, 100) || null
-          // values[5] は プレスリリースカテゴリ3（スキップ）
+          const pressReleaseType = (values[3] || '').substring(0, 100) || null
+          const pressReleaseCategory1 = (values[4] || '').substring(0, 100) || null
+          const pressReleaseCategory2 = (values[5] || '').substring(0, 100) || null
           const companyName = (values[6] || '').substring(0, 255)
           const companyWebsite = (values[7] || '').substring(0, 1000) || null
           const industry = (values[8] || '').substring(0, 100) || null
-          const address = values[9] || null
+          const address = (values[9] || '').substring(0, 500) || null
           const phoneNumber = (values[10] || '').substring(0, 100) || null
           const representative = (values[11] || '').substring(0, 200) || null
           const listingStatus = (values[12] || '').substring(0, 200) || null
@@ -178,22 +182,16 @@ export async function POST(request: NextRequest) {
             capitalAmountNumeric = parsed
           }
           
+          // 設立年月の処理
           let establishedYear = null
+          let establishedMonth = null
           if (establishedYearStr && establishedYearStr.trim() !== '') {
             const parsed = parseInt(establishedYearStr)
             establishedYear = isNaN(parsed) ? null : parsed
-          } else if (establishedDateText) {
-            const parsed = parseEstablishedDate(establishedDateText).year
-            establishedYear = parsed
           }
-          
-          let establishedMonth = null
           if (establishedMonthStr && establishedMonthStr.trim() !== '') {
             const parsed = parseInt(establishedMonthStr)
             establishedMonth = isNaN(parsed) ? null : parsed
-          } else if (establishedDateText) {
-            const parsed = parseEstablishedDate(establishedDateText).month
-            establishedMonth = parsed
           }
           
           if (!companyName || companyName.trim() === '') {
@@ -202,45 +200,35 @@ export async function POST(request: NextRequest) {
             continue
           }
           
-          await client.query(`
+          const insertResult = await client.query(`
             INSERT INTO prtimes_companies (
-              delivery_date, press_release_url, press_release_title,
+              delivery_date, press_release_url, press_release_title, press_release_type,
               press_release_category1, press_release_category2, company_name,
-              company_website, industry, address, phone_number,
-              representative, listing_status, capital_amount_text,
-              established_date_text, capital_amount_numeric,
-              established_year, established_month, upload_batch_id
+              company_website, business_category, address,
+              phone_number, representative, listing_status, capital_amount_text,
+              established_date_text, capital_amount_numeric, established_year, established_month
             ) VALUES (
               $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
             )
           `, [
-            deliveryDate, pressReleaseUrl, pressReleaseTitle,
+            deliveryDate, pressReleaseUrl, pressReleaseTitle, pressReleaseType,
             pressReleaseCategory1, pressReleaseCategory2, companyName,
-            companyWebsite, industry, address, phoneNumber,
-            representative, listingStatus, capitalAmountText,
-            establishedDateText, capitalAmountNumeric,
-            establishedYear, establishedMonth, batchId
+            companyWebsite, industry, address,
+            phoneNumber, representative, listingStatus, capitalAmountText,
+            establishedDateText, capitalAmountNumeric, establishedYear, establishedMonth
           ])
           
-          if (pressReleaseCategory1) {
-            await updateCategories(client, 'category1', pressReleaseCategory1)
-          }
-          if (pressReleaseCategory2) {
-            await updateCategories(client, 'category2', pressReleaseCategory2)
-          }
-          if (industry) {
-            await updateCategories(client, 'industry', industry)
-          }
-          if (listingStatus) {
-            await updateCategories(client, 'listing_status', listingStatus)
-          }
+          console.log(`Inserted row ${i}: ${companyName}`)
+          
+          // カテゴリ更新は削除（処理を高速化）
           
           successCount++
         } catch (rowError) {
           console.error(`Error processing row ${i}:`, rowError)
-          console.error(`Row data:`, values)
+          console.error(`Row data:`, values || 'undefined')
           const errorMessage = rowError instanceof Error ? rowError.message : 'データ処理エラー'
-          errors.push(`行 ${i}: ${errorMessage} - データ: ${JSON.stringify(values.slice(0, 5))}`)
+          const safeValues = values || []
+          errors.push(`行 ${i}: ${errorMessage} - データ: ${JSON.stringify(safeValues.slice(0, 5))}`)
           errorCount++
         }
       }
@@ -253,8 +241,6 @@ export async function POST(request: NextRequest) {
         WHERE id = $4
       `, [successCount, errorCount, status, uploadId])
       
-      await client.query('COMMIT')
-      
       return NextResponse.json({
         message: 'CSV upload completed',
         successCount,
@@ -263,7 +249,6 @@ export async function POST(request: NextRequest) {
         batchId
       })
     } catch (error) {
-      await client.query('ROLLBACK')
       throw error
     } finally {
       client.release()

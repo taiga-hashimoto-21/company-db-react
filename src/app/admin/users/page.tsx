@@ -10,7 +10,7 @@ import { Select } from '@/components/ui/Select'
 import { useAuth } from '@/contexts/AuthContext'
 
 interface User {
-  id: number
+  id: string
   username: string
   name: string
   companyName?: string
@@ -22,13 +22,14 @@ interface User {
 }
 
 export default function AdminUsersPage() {
-  const { user, logout, getAllUsers, createUser, updateUser, updatePassword, deleteUser, getUserPassword } = useAuth()
+  const { user, logout, getAllUsers, createUser, updateUser, updatePassword, deleteUser } = useAuth()
   const router = useRouter()
   const [users, setUsers] = useState<User[]>([])
+  const [userPasswords, setUserPasswords] = useState<Record<string, string>>({})
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [editingUser, setEditingUser] = useState<User | null>(null)
-  const [showPasswordForm, setShowPasswordForm] = useState<number | null>(null)
-  const [editingRowId, setEditingRowId] = useState<number | null>(null)
+  const [showPasswordForm, setShowPasswordForm] = useState<string | null>(null)
+  const [editingRowId, setEditingRowId] = useState<string | null>(null)
   const [editingRowData, setEditingRowData] = useState<Partial<User>>({})
 
   // フォーム状態
@@ -99,14 +100,28 @@ export default function AdminUsersPage() {
     setFormData({...formData, password: newPassword})
   }
 
-  const loadUsers = () => {
-    const allUsers = getAllUsers()
-    // IDの降順でソート（新しく作成されたユーザーが上に来る）
-    const sortedUsers = allUsers.sort((a, b) => b.id - a.id)
-    setUsers(sortedUsers)
+  const loadUsers = async () => {
+    const allUsers = await getAllUsers()
+    setUsers(allUsers)
+    
+    // 各ユーザーのパスワードを取得
+    const passwords: Record<string, string> = {}
+    for (const user of allUsers) {
+      try {
+        const response = await fetch(`/api/users/${user.id}/password`)
+        if (response.ok) {
+          const data = await response.json()
+          passwords[user.id] = data.password
+        }
+      } catch (error) {
+        console.error(`Failed to get password for user ${user.username}:`, error)
+        passwords[user.id] = '********'
+      }
+    }
+    setUserPasswords(passwords)
   }
 
-  const handleCreateUser = (e: React.FormEvent) => {
+  const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault()
     
     if (formData.password.length < 6) {
@@ -114,14 +129,15 @@ export default function AdminUsersPage() {
       return
     }
 
-    const success = createUser({
+    const success = await createUser({
       username: formData.username,
       name: formData.name,
       companyName: formData.companyName,
       phoneNumber: formData.phoneNumber,
       email: formData.email,
-      type: formData.type
-    }, formData.password)
+      type: formData.type,
+      password: formData.password
+    })
 
     if (success) {
       setShowCreateForm(false)
@@ -155,7 +171,7 @@ export default function AdminUsersPage() {
     }
   }
 
-  const handleUpdatePassword = (userId: number) => {
+  const handleUpdatePassword = async (userId: string) => {
     if (passwordData.newPassword !== passwordData.confirmPassword) {
       showNotification('パスワードが一致しません')
       return
@@ -166,7 +182,7 @@ export default function AdminUsersPage() {
       return
     }
 
-    const success = updatePassword(userId, passwordData.newPassword)
+    const success = await updatePassword(userId, passwordData.newPassword)
     if (success) {
       setShowPasswordForm(null)
       setPasswordData({ newPassword: '', confirmPassword: '' })
@@ -176,14 +192,14 @@ export default function AdminUsersPage() {
     }
   }
 
-  const handleDeleteUser = (userId: number, username: string) => {
+  const handleDeleteUser = async (userId: string, username: string) => {
     if (username === 'admin') {
       showNotification('管理者ユーザーは削除できません')
       return
     }
 
     if (confirm(`ユーザー「${username}」を削除しますか？`)) {
-      const success = deleteUser(userId)
+      const success = await deleteUser(userId)
       if (success) {
         loadUsers()
         showNotification('ユーザーを削除しました')
@@ -220,14 +236,18 @@ export default function AdminUsersPage() {
   const saveInlineEdit = async () => {
     if (!editingRowId || !editingRowData) return
 
-    // ユーザー情報の更新
-    const success = updateUser(editingRowId, {
+    const updateData = {
       name: editingRowData.name || '',
       companyName: editingRowData.companyName || '',
       phoneNumber: editingRowData.phoneNumber || '',
       email: editingRowData.email || '',
       type: editingRowData.type || 'user'
-    })
+    }
+    
+    console.log('Saving user update:', JSON.stringify({ userId: editingRowId, updateData }, null, 2))
+
+    // ユーザー情報の更新
+    const success = await updateUser(editingRowId, updateData)
 
     if (success) {
       loadUsers()
@@ -491,7 +511,7 @@ export default function AdminUsersPage() {
                         
                         {/* パスワード */}
                         <td className="py-4 px-4 text-sm font-mono">
-                          {getUserPassword(u.username) || '-'}
+                          {userPasswords[u.id] || '読み込み中...'}
                         </td>
                         
                         {/* 権限 */}

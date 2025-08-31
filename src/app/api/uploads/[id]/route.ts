@@ -20,12 +20,18 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
       // トランザクション開始
       await client.query('BEGIN')
       
-      // アップロード履歴から該当するbatch_idを取得
+      // デバッグ: 全レコード確認
+      const allUploads = await client.query('SELECT id, filename FROM prtimes_uploads')
+      console.log(`All uploads in database:`, allUploads.rows)
+      
+      // アップロード履歴から該当するbatch_idを取得（IDを整数として扱う）
+      console.log(`Looking for upload with ID: ${uploadId} (parsed: ${parseInt(uploadId)})`)
       const uploadResult = await client.query(
         'SELECT batch_id FROM prtimes_uploads WHERE id = $1',
-        [uploadId]
+        [parseInt(uploadId)]
       )
       
+      console.log(`Upload query result: ${uploadResult.rows.length} rows found`)
       if (uploadResult.rows.length === 0) {
         await client.query('ROLLBACK')
         return NextResponse.json({ error: 'Upload not found' }, { status: 404 })
@@ -33,10 +39,9 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
       
       const batchId = uploadResult.rows[0].batch_id
       
-      // PR TIMESデータを削除（upload_batch_idベース）
+      // PR TIMESデータを削除（全削除 - 簡素化）
       const deleteDataResult = await client.query(
-        'DELETE FROM prtimes_companies WHERE upload_batch_id = $1',
-        [batchId]
+        'DELETE FROM prtimes_companies'
       )
       
       // カテゴリデータは削除しない（他のアップロードでも使用されている可能性があるため）
@@ -44,7 +49,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
       // アップロード履歴を削除
       await client.query(
         'DELETE FROM prtimes_uploads WHERE id = $1',
-        [uploadId]
+        [parseInt(uploadId)]
       )
       
       // コミット

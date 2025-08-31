@@ -332,7 +332,7 @@ export default function AdminPRTimesPage() {
           <div className="mb-6">
             <h2 className="text-xl font-semibold text-[var(--text-primary)] mb-2">アップロード履歴</h2>
             <p className="text-sm text-[var(--text-secondary)]">
-              過去のCSVアップロード履歴を確認・削除できます
+              過去のCSVアップロード履歴を確認できます（削除機能はデータ保護のため無効化されています）
             </p>
           </div>
           <div>
@@ -409,11 +409,12 @@ export default function AdminPRTimesPage() {
                         </td>
                         <td className="py-4 px-4">
                           <button
-                            onClick={() => handleDeleteUpload(upload.id, upload.filename)}
+                            disabled
+                            title="削除機能は現在無効化されています（データ保護のため）"
                             style={{ padding: '7px 15px', height: '35px' }}
-                            className="smarthr-button bg-red-500 text-white border-transparent hover:bg-red-600 text-sm"
+                            className="smarthr-button bg-gray-400 text-gray-600 border-transparent cursor-not-allowed text-sm"
                           >
-                            削除
+                            削除不可
                           </button>
                         </td>
                       </tr>

@@ -18,16 +18,16 @@ async function migratePRTimesDatabase() {
     
     console.log('Creating PR TIMES companies table...')
     await client.query(`
-      CREATE TABLE IF NOT EXISTS prtimes_companies (
+      CREATE TABLE IF NOT EXISTS prtimes_data (
         id BIGSERIAL PRIMARY KEY,
         delivery_date TIMESTAMP WITH TIME ZONE NOT NULL,
         press_release_url VARCHAR(1000) NOT NULL,
         press_release_title TEXT NOT NULL,
-        press_release_category1 VARCHAR(100),
+        press_release_type VARCHAR(100),
         press_release_category2 VARCHAR(100),
         company_name VARCHAR(255) NOT NULL,
         company_website VARCHAR(1000),
-        industry VARCHAR(100),
+        business_category VARCHAR(100),
         address TEXT,
         phone_number VARCHAR(50),
         representative VARCHAR(100),
@@ -57,17 +57,17 @@ async function migratePRTimesDatabase() {
     
     console.log('Creating indexes...')
     const indexes = [
-      'CREATE INDEX IF NOT EXISTS idx_prtimes_company_name ON prtimes_companies USING gin(company_name gin_trgm_ops)',
-      'CREATE INDEX IF NOT EXISTS idx_prtimes_industry ON prtimes_companies(industry)',
-      'CREATE INDEX IF NOT EXISTS idx_prtimes_capital_amount ON prtimes_companies(capital_amount_numeric)',
-      'CREATE INDEX IF NOT EXISTS idx_prtimes_established_year ON prtimes_companies(established_year)',
-      'CREATE INDEX IF NOT EXISTS idx_prtimes_established_month ON prtimes_companies(established_month)',
-      'CREATE INDEX IF NOT EXISTS idx_prtimes_delivery_date ON prtimes_companies(delivery_date)',
-      'CREATE INDEX IF NOT EXISTS idx_prtimes_listing_status ON prtimes_companies(listing_status)',
-      'CREATE INDEX IF NOT EXISTS idx_prtimes_press_category1 ON prtimes_companies(press_release_category1)',
-      'CREATE INDEX IF NOT EXISTS idx_prtimes_press_category2 ON prtimes_companies(press_release_category2)',
-      'CREATE INDEX IF NOT EXISTS idx_prtimes_capital_year ON prtimes_companies(capital_amount_numeric, established_year)',
-      'CREATE INDEX IF NOT EXISTS idx_prtimes_industry_capital ON prtimes_companies(industry, capital_amount_numeric)',
+      'CREATE INDEX IF NOT EXISTS idx_prtimes_company_name ON prtimes_data(company_name)',
+      'CREATE INDEX IF NOT EXISTS idx_prtimes_business_category ON prtimes_data(business_category)',
+      'CREATE INDEX IF NOT EXISTS idx_prtimes_capital_amount ON prtimes_data(capital_amount_numeric)',
+      'CREATE INDEX IF NOT EXISTS idx_prtimes_established_year ON prtimes_data(established_year)',
+      'CREATE INDEX IF NOT EXISTS idx_prtimes_established_month ON prtimes_data(established_month)',
+      'CREATE INDEX IF NOT EXISTS idx_prtimes_delivery_date ON prtimes_data(delivery_date)',
+      'CREATE INDEX IF NOT EXISTS idx_prtimes_listing_status ON prtimes_data(listing_status)',
+      'CREATE INDEX IF NOT EXISTS idx_prtimes_press_type ON prtimes_data(press_release_type)',
+      'CREATE INDEX IF NOT EXISTS idx_prtimes_press_category2 ON prtimes_data(press_release_category2)',
+      'CREATE INDEX IF NOT EXISTS idx_prtimes_capital_year ON prtimes_data(capital_amount_numeric, established_year)',
+      'CREATE INDEX IF NOT EXISTS idx_prtimes_business_capital ON prtimes_data(business_category, capital_amount_numeric)',
       'CREATE INDEX IF NOT EXISTS idx_prtimes_categories_type ON prtimes_categories(category_type)',
       'CREATE INDEX IF NOT EXISTS idx_prtimes_categories_active ON prtimes_categories(is_active)'
     ]
@@ -76,13 +76,23 @@ async function migratePRTimesDatabase() {
       await client.query(indexQuery)
     }
     
-    console.log('Creating triggers...')
+    console.log('Creating update function and triggers...')
     await client.query(`
-      DROP TRIGGER IF EXISTS update_prtimes_companies_updated_at ON prtimes_companies
+      CREATE OR REPLACE FUNCTION update_updated_at()
+      RETURNS TRIGGER AS $$
+      BEGIN
+        NEW.updated_at = NOW();
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+    `)
+    
+    await client.query(`
+      DROP TRIGGER IF EXISTS update_prtimes_data_updated_at ON prtimes_data
     `)
     await client.query(`
-      CREATE TRIGGER update_prtimes_companies_updated_at 
-      BEFORE UPDATE ON prtimes_companies 
+      CREATE TRIGGER update_prtimes_data_updated_at 
+      BEFORE UPDATE ON prtimes_data 
       FOR EACH ROW EXECUTE FUNCTION update_updated_at()
     `)
     
@@ -93,14 +103,14 @@ async function migratePRTimesDatabase() {
     await client.query(`
       CREATE VIEW prtimes_stats AS
       SELECT 
-        industry,
+        business_category,
         COUNT(*) as company_count,
         AVG(capital_amount_numeric) as avg_capital,
         MIN(established_year) as oldest_year,
         MAX(established_year) as newest_year
-      FROM prtimes_companies 
-      WHERE industry IS NOT NULL
-      GROUP BY industry
+      FROM prtimes_data 
+      WHERE business_category IS NOT NULL
+      GROUP BY business_category
       ORDER BY company_count DESC
     `)
     
@@ -108,7 +118,7 @@ async function migratePRTimesDatabase() {
     
     console.log('✅ PR TIMES database migration completed successfully!')
     
-    const companyCount = await client.query('SELECT COUNT(*) FROM prtimes_companies')
+    const companyCount = await client.query('SELECT COUNT(*) FROM prtimes_data')
     const categoryCount = await client.query('SELECT COUNT(*) FROM prtimes_categories')
     
     console.log(`📊 Current data:`)

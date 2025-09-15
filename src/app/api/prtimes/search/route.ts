@@ -6,6 +6,15 @@ const pool = new Pool({
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 })
 
+// 起動時キャッシュとインデックス
+let COMPANIES_CACHE: any[] = []
+let INDUSTRY_INDEX = new Map<string, any[]>()
+let CAPITAL_INDEX = new Map<number, any[]>()
+let LISTING_INDEX = new Map<string, any[]>()
+let PRESS_TYPE_INDEX = new Map<string, any[]>()
+let CACHE_INITIALIZED = false
+let CACHE_INITIALIZING = false
+
 export async function POST(request: NextRequest) {
   const startTime = Date.now()
   try {
@@ -41,77 +50,9 @@ export async function POST(request: NextRequest) {
     const actualLimit = tableOnly ? 50 : (exportAll ? 1000000 : limit)
 
     const offset = exportAll ? 0 : (page - 1) * actualLimit
-    const conditions: string[] = []
-    const params: any[] = []
-    let paramIndex = 1
-
-    if (companyName) {
-      conditions.push(`company_name ILIKE $${paramIndex}`)
-      params.push(`%${companyName}%`)
-      paramIndex++
-    }
-
-    if (industry && industry.length > 0) {
-      conditions.push(`business_category = ANY($${paramIndex})`)
-      params.push(industry)
-      paramIndex++
-    }
-
-    if (pressReleaseType && pressReleaseType.length > 0) {
-      conditions.push(`press_release_type = ANY($${paramIndex})`)
-      params.push(pressReleaseType)
-      paramIndex++
-    }
-
-    if (listingStatus && listingStatus.length > 0) {
-      conditions.push(`listing_status = ANY($${paramIndex})`)
-      params.push(listingStatus)
-      paramIndex++
-    }
-
-    if (capitalMin !== undefined && capitalMin > 0) {
-      conditions.push(`capital_amount_numeric >= $${paramIndex}`)
-      params.push(capitalMin)
-      paramIndex++
-    }
-
-    if (capitalMax !== undefined && capitalMax > 0) {
-      conditions.push(`capital_amount_numeric <= $${paramIndex}`)
-      params.push(capitalMax)
-      paramIndex++
-    }
-
-    if (establishedYearMin !== undefined && establishedYearMin > 0) {
-      conditions.push(`established_year >= $${paramIndex}`)
-      params.push(establishedYearMin)
-      paramIndex++
-    }
-
-    if (establishedYearMax !== undefined && establishedYearMax > 0) {
-      conditions.push(`established_year <= $${paramIndex}`)
-      params.push(establishedYearMax)
-      paramIndex++
-    }
-
-    if (deliveryDateFrom) {
-      conditions.push(`delivery_date >= $${paramIndex}`)
-      params.push(deliveryDateFrom)
-      paramIndex++
-    }
-
-    if (deliveryDateTo) {
-      conditions.push(`delivery_date <= $${paramIndex}`)
-      params.push(deliveryDateTo)
-      paramIndex++
-    }
-
-    // ホームページURLが有効なデータのみを取得する条件を追加
-    conditions.push(`company_website IS NOT NULL AND company_website != '' AND company_website != '-'`)
-    
-    const whereClause = `WHERE ${conditions.join(' AND ')}`
     
     // ドメイン抽出関数
-    function extractDomain(url) {
+    function extractDomain(url: string): string | null {
       if (!url || !url.trim()) return null
       try {
         const cleanUrl = url.trim()
@@ -126,7 +67,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 会社名正規化関数
-    function normalizeCompanyName(name) {
+    function normalizeCompanyName(name: string): string {
       if (!name || !name.trim()) return 'no-name'
       return name.trim()
         .toLowerCase()
@@ -134,89 +75,260 @@ export async function POST(request: NextRequest) {
         .replace(/\s+/g, '')
     }
 
-    const client = await pool.connect()
+    // キャッシュ初期化関数
+    async function initializeCache() {
+      if (CACHE_INITIALIZED || CACHE_INITIALIZING) return
 
-    try {
-      // 全データを取得してJavaScript側で重複除去
-      const searchQuery = `
-        SELECT *
-        FROM prtimes_companies
-        ${whereClause}
-        ORDER BY delivery_date DESC
-      `
+      CACHE_INITIALIZING = true
+      console.log('🚀 Initializing companies cache...')
 
-      const companiesResult = await client.query(searchQuery, params)
+      try {
+        const client = await pool.connect()
 
-      // ドメインベース重複除去
-      const domainMap = new Map()
+        try {
+          // 全件取得
+          const searchQuery = `
+            SELECT *
+            FROM prtimes_companies
+            WHERE company_website IS NOT NULL AND company_website != '' AND company_website != '-'
+            ORDER BY delivery_date DESC
+          `
 
-      companiesResult.rows.forEach(company => {
-        const domain = extractDomain(company.company_website)
-        const normalizedName = normalizeCompanyName(company.company_name)
+          const companiesResult = await client.query(searchQuery)
+          console.log(`📊 Loaded ${companiesResult.rows.length} companies from database`)
 
-        // ドメインがある場合はドメインをキーに、ない場合は正規化した会社名をキーに
-        const key = domain || normalizedName
+          // ドメインベース重複除去
+          const domainMap = new Map()
 
-        if (!domainMap.has(key)) {
-          domainMap.set(key, [])
+          companiesResult.rows.forEach(company => {
+            const domain = extractDomain(company.company_website)
+            const normalizedName = normalizeCompanyName(company.company_name)
+            const key = domain || normalizedName
+
+            if (!domainMap.has(key)) {
+              domainMap.set(key, [])
+            }
+            domainMap.get(key).push(company)
+          })
+
+          // 各グループから最新のプレスリリースを選択
+          const uniqueCompanies = Array.from(domainMap.values()).map(companyGroup => {
+            const sortedCompanies = companyGroup.sort((a: any, b: any) =>
+              new Date(b.delivery_date).getTime() - new Date(a.delivery_date).getTime()
+            )
+            return sortedCompanies[0]
+          })
+
+          COMPANIES_CACHE = uniqueCompanies
+          console.log(`✅ Deduplicated to ${uniqueCompanies.length} unique companies`)
+
+          // インデックス構築
+          console.log('🔍 Building search indexes...')
+          INDUSTRY_INDEX.clear()
+          CAPITAL_INDEX.clear()
+          LISTING_INDEX.clear()
+          PRESS_TYPE_INDEX.clear()
+
+          uniqueCompanies.forEach(company => {
+            // 業種別インデックス
+            if (company.business_category) {
+              if (!INDUSTRY_INDEX.has(company.business_category)) {
+                INDUSTRY_INDEX.set(company.business_category, [])
+              }
+              INDUSTRY_INDEX.get(company.business_category)!.push(company)
+            }
+
+            // 資本金別インデックス（1000万円単位）
+            if (company.capital_amount_numeric) {
+              const capitalRange = Math.floor(company.capital_amount_numeric / 10000) * 10000
+              if (!CAPITAL_INDEX.has(capitalRange)) {
+                CAPITAL_INDEX.set(capitalRange, [])
+              }
+              CAPITAL_INDEX.get(capitalRange)!.push(company)
+            }
+
+            // 上場区分別インデックス
+            if (company.listing_status) {
+              if (!LISTING_INDEX.has(company.listing_status)) {
+                LISTING_INDEX.set(company.listing_status, [])
+              }
+              LISTING_INDEX.get(company.listing_status)!.push(company)
+            }
+
+            // プレスリリース種類別インデックス
+            if (company.press_release_type) {
+              if (!PRESS_TYPE_INDEX.has(company.press_release_type)) {
+                PRESS_TYPE_INDEX.set(company.press_release_type, [])
+              }
+              PRESS_TYPE_INDEX.get(company.press_release_type)!.push(company)
+            }
+          })
+
+          CACHE_INITIALIZED = true
+          console.log(`🎉 Cache initialization completed! Indexes built:`)
+          console.log(`   - Industries: ${INDUSTRY_INDEX.size}`)
+          console.log(`   - Capital ranges: ${CAPITAL_INDEX.size}`)
+          console.log(`   - Listing status: ${LISTING_INDEX.size}`)
+          console.log(`   - Press release types: ${PRESS_TYPE_INDEX.size}`)
+
+        } finally {
+          client.release()
         }
-        domainMap.get(key).push(company)
-      })
-
-      // 各グループから最新のプレスリリースを選択
-      const uniqueCompanies = Array.from(domainMap.values()).map(companyGroup => {
-        const sortedCompanies = companyGroup.sort((a, b) =>
-          new Date(b.delivery_date).getTime() - new Date(a.delivery_date).getTime()
-        )
-        return sortedCompanies[0]
-      })
-
-      const totalCount = uniqueCompanies.length
-
-      // ページネーション処理
-      const startIndex = exportAll ? 0 : offset
-      const endIndex = exportAll ? uniqueCompanies.length : offset + actualLimit
-      const paginatedCompanies = uniqueCompanies.slice(startIndex, endIndex)
-      
-      const totalPages = Math.ceil(totalCount / actualLimit)
-      const responseTime = Date.now() - startTime
-
-      return NextResponse.json({
-        companies: paginatedCompanies.map(row => ({
-          id: row.id,
-          deliveryDate: row.delivery_date,
-          pressReleaseUrl: row.press_release_url,
-          pressReleaseTitle: row.press_release_title,
-          pressReleaseCategory1: row.press_release_category1,
-          pressReleaseCategory2: row.press_release_category2,
-          companyName: row.company_name,
-          companyWebsite: row.company_website,
-          industry: row.business_category,
-          address: row.address,
-          phoneNumber: row.phone_number,
-          representative: row.representative,
-          listingStatus: row.listing_status,
-          capitalAmountText: row.capital_amount_text,
-          establishedDateText: row.established_date_text,
-          capitalAmountNumeric: row.capital_amount_numeric,
-          establishedYear: row.established_year,
-          establishedMonth: row.established_month,
-          createdAt: row.created_at,
-          updatedAt: row.updated_at
-        })),
-        pagination: {
-          currentPage: page,
-          totalPages,
-          totalCount,
-          hasNextPage: page < totalPages,
-          hasPrevPage: page > 1
-        },
-        _responseTime: responseTime,
-        _cache: 'miss'
-      })
-    } finally {
-      client.release()
+      } catch (error) {
+        console.error('❌ Cache initialization failed:', error)
+        CACHE_INITIALIZED = false
+      } finally {
+        CACHE_INITIALIZING = false
+      }
     }
+
+    // キャッシュ初期化（必要に応じて）
+    if (!CACHE_INITIALIZED) {
+      await initializeCache()
+    }
+
+    // キャッシュが利用できない場合の警告
+    if (!CACHE_INITIALIZED) {
+      console.warn('⚠️ Cache not available, falling back to database query')
+      return NextResponse.json(
+        { error: 'Search service temporarily unavailable' },
+        { status: 503 }
+      )
+    }
+
+    // 高速フィルタリング（メモリ内検索）
+    console.log('🔍 Starting fast search with filters:', body)
+
+    let filteredCompanies = COMPANIES_CACHE
+
+    // 会社名フィルタ
+    if (companyName) {
+      filteredCompanies = filteredCompanies.filter(company =>
+        company.company_name.toLowerCase().includes(companyName.toLowerCase())
+      )
+    }
+
+    // 業種フィルタ（インデックス使用）
+    if (industry && industry.length > 0) {
+      const industryResults = new Set<any>()
+      industry.forEach((ind: string) => {
+        const companiesInIndustry = INDUSTRY_INDEX.get(ind) || []
+        companiesInIndustry.forEach(company => industryResults.add(company))
+      })
+      filteredCompanies = filteredCompanies.filter(company => industryResults.has(company))
+    }
+
+    // プレスリリース種類フィルタ（インデックス使用）
+    if (pressReleaseType && pressReleaseType.length > 0) {
+      const pressTypeResults = new Set<any>()
+      pressReleaseType.forEach((type: string) => {
+        const companiesWithType = PRESS_TYPE_INDEX.get(type) || []
+        companiesWithType.forEach(company => pressTypeResults.add(company))
+      })
+      filteredCompanies = filteredCompanies.filter(company => pressTypeResults.has(company))
+    }
+
+    // 上場区分フィルタ（インデックス使用）
+    if (listingStatus && listingStatus.length > 0) {
+      const listingResults = new Set<any>()
+      listingStatus.forEach((status: string) => {
+        const companiesWithStatus = LISTING_INDEX.get(status) || []
+        companiesWithStatus.forEach(company => listingResults.add(company))
+      })
+      filteredCompanies = filteredCompanies.filter(company => listingResults.has(company))
+    }
+
+    // 資本金フィルタ
+    if (capitalMin !== undefined && capitalMin > 0) {
+      filteredCompanies = filteredCompanies.filter(company =>
+        company.capital_amount_numeric && company.capital_amount_numeric >= capitalMin
+      )
+    }
+
+    if (capitalMax !== undefined && capitalMax > 0) {
+      filteredCompanies = filteredCompanies.filter(company =>
+        company.capital_amount_numeric && company.capital_amount_numeric <= capitalMax
+      )
+    }
+
+    // 設立年フィルタ
+    if (establishedYearMin !== undefined && establishedYearMin > 0) {
+      filteredCompanies = filteredCompanies.filter(company =>
+        company.established_year && company.established_year >= establishedYearMin
+      )
+    }
+
+    if (establishedYearMax !== undefined && establishedYearMax > 0) {
+      filteredCompanies = filteredCompanies.filter(company =>
+        company.established_year && company.established_year <= establishedYearMax
+      )
+    }
+
+    // 配信日フィルタ
+    if (deliveryDateFrom) {
+      const fromDate = new Date(deliveryDateFrom)
+      filteredCompanies = filteredCompanies.filter(company =>
+        company.delivery_date && new Date(company.delivery_date) >= fromDate
+      )
+    }
+
+    if (deliveryDateTo) {
+      const toDate = new Date(deliveryDateTo)
+      filteredCompanies = filteredCompanies.filter(company =>
+        company.delivery_date && new Date(company.delivery_date) <= toDate
+      )
+    }
+
+    // ソート（配信日降順）
+    filteredCompanies.sort((a: any, b: any) =>
+      new Date(b.delivery_date).getTime() - new Date(a.delivery_date).getTime()
+    )
+
+    const totalCount = filteredCompanies.length
+
+    // ページネーション処理
+    const startIndex = exportAll ? 0 : offset
+    const endIndex = exportAll ? filteredCompanies.length : offset + actualLimit
+    const paginatedCompanies = filteredCompanies.slice(startIndex, endIndex)
+
+    const totalPages = Math.ceil(totalCount / actualLimit)
+    const responseTime = Date.now() - startTime
+
+    console.log(`✅ Fast search completed: ${totalCount} results in ${responseTime}ms`)
+
+    return NextResponse.json({
+      companies: paginatedCompanies.map(row => ({
+        id: row.id,
+        deliveryDate: row.delivery_date,
+        pressReleaseUrl: row.press_release_url,
+        pressReleaseTitle: row.press_release_title,
+        pressReleaseCategory1: row.press_release_category1,
+        pressReleaseCategory2: row.press_release_category2,
+        companyName: row.company_name,
+        companyWebsite: row.company_website,
+        industry: row.business_category,
+        address: row.address,
+        phoneNumber: row.phone_number,
+        representative: row.representative,
+        listingStatus: row.listing_status,
+        capitalAmountText: row.capital_amount_text,
+        establishedDateText: row.established_date_text,
+        capitalAmountNumeric: row.capital_amount_numeric,
+        establishedYear: row.established_year,
+        establishedMonth: row.established_month,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at
+      })),
+      pagination: {
+        currentPage: page,
+        totalPages,
+        totalCount,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1
+      },
+      _responseTime: responseTime,
+      _cache: 'hit'
+    })
   } catch (error) {
     console.error('PR TIMES search error:', error)
     return NextResponse.json(

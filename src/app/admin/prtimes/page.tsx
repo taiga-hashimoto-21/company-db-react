@@ -83,20 +83,28 @@ export default function AdminPRTimesPage() {
     setLoading(true)
 
     try {
-      // 検索APIを使って全ユニーク企業データを取得
-      const response = await fetch('/api/prtimes/search', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ exportAll: true })
-      })
-      if (!response.ok) throw new Error('Failed to fetch companies')
+      // 検索APIとデータベースAPIを並列で実行
+      const [searchResponse, dbResponse] = await Promise.all([
+        fetch('/api/prtimes/search', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ exportAll: true })
+        }),
+        fetch('/api/prtimes?page=1&limit=1') // 件数のみ取得
+      ])
 
-      const data = await response.json()
-      setAllCompanies(data.companies)
-      setTotalCount(data.pagination.totalRawCount || data.pagination.totalCount) // 全件数
-      setUniqueCount(data.pagination.uniqueCount || data.companies.length) // ユニーク企業数
+      if (!searchResponse.ok) throw new Error('Failed to fetch companies')
+      if (!dbResponse.ok) throw new Error('Failed to fetch counts')
+
+      const searchData = await searchResponse.json()
+      const dbData = await dbResponse.json()
+
+      setAllCompanies(searchData.companies)
+      // データベースAPIから最新の件数を取得
+      setTotalCount(dbData.pagination.totalCount) // 全件数
+      setUniqueCount(dbData.pagination.uniqueCount) // ユニーク企業数
       setHasMoreAdminData(false) // 全データ取得済み
     } catch (error) {
       console.error('Error fetching companies:', error)
@@ -160,7 +168,11 @@ export default function AdminPRTimesPage() {
     // フロントエンドでの重複除去は不要、ソートのみ
     return allCompanies
       .map(company => ({ ...company, pressReleaseCount: 1 }))
-      .sort((a, b) => a.companyName.localeCompare(b.companyName))
+      .sort((a, b) => {
+        const nameA = a.companyName || ''
+        const nameB = b.companyName || ''
+        return nameA.localeCompare(nameB)
+      })
   }, [allCompanies])
 
   const fetchUploads = useCallback(async () => {
@@ -221,8 +233,11 @@ export default function AdminPRTimesPage() {
           
           // データ再読み込み
           if (successCount > 0) {
-            await loadAllAdminData()
-            await fetchUploads()
+            // キャッシュ更新完了を待ってからデータを再取得
+            setTimeout(async () => {
+              await loadAllAdminData()
+              await fetchUploads()
+            }, 2000) // 2秒待ってからデータ再取得
           }
           
           setTimeout(() => {
@@ -584,16 +599,16 @@ export default function AdminPRTimesPage() {
           </div>
           <div>
             <div className="overflow-x-auto">
-              <table className="smarthr-table w-full">
+              <table className="smarthr-table w-full" style={{ tableLayout: 'fixed' }}>
                 <thead>
                   <tr className="border-b border-[var(--border-color)]">
-                    <th className="text-left py-3 px-4 font-medium" style={{ width: '15%' }}>会社名</th>
-                    <th className="text-left py-3 px-4 font-medium" style={{ width: '20%' }}>ホームページURL</th>
-                    <th className="text-left py-3 px-4 font-medium" style={{ width: '15%' }}>資本金</th>
-                    <th className="text-left py-3 px-4 font-medium" style={{ width: '12%' }}>設立年</th>
-                    <th className="text-left py-3 px-4 font-medium" style={{ width: '12%' }}>業種</th>
-                    <th className="text-left py-3 px-4 font-medium" style={{ width: '14%' }}>上場区分</th>
-                    <th className="text-left py-3 px-4 font-medium" style={{ width: '12%' }}>代表者名</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '200px !important', minWidth: '200px', maxWidth: '200px' }}>会社名</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '200px !important', minWidth: '200px', maxWidth: '200px' }}>ホームページURL</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '140px !important', minWidth: '140px', maxWidth: '140px' }}>資本金</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '140px !important', minWidth: '140px', maxWidth: '140px' }}>設立年</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '140px !important', minWidth: '140px', maxWidth: '140px' }}>業種</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '140px !important', minWidth: '140px', maxWidth: '140px' }}>上場区分</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '140px !important', minWidth: '140px', maxWidth: '140px' }}>代表者名</th>
                   </tr>
                 </thead>
                 <tbody>

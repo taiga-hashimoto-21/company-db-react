@@ -20,7 +20,16 @@ export async function GET(request: NextRequest) {
       const [totalResult, uniqueResult] = await Promise.all([
         client.query('SELECT COUNT(*) as total FROM prtimes_companies'),
         client.query(`
-          SELECT COUNT(DISTINCT company_website) as unique
+          SELECT COUNT(DISTINCT
+            CASE
+              WHEN company_website ~ '^https?://' THEN
+                regexp_replace(
+                  regexp_replace(company_website, '^https?://', ''),
+                  '/.*$', ''
+                )
+              ELSE company_website
+            END
+          ) as unique
           FROM prtimes_companies
           WHERE company_website IS NOT NULL
           AND company_website != ''

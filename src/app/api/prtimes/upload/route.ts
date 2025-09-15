@@ -286,6 +286,40 @@ async function processCSVAsync(lines: string[], uploadId: number, batchId: strin
     `, [successCount, errorCount, status, uploadId, successCount + errorCount])
     
     console.log(`✅ CSV processing completed: ${successCount} success, ${errorCount} errors`)
+
+    // キャッシュ更新処理
+    if (successCount > 0) {
+      try {
+        console.log('🔄 Updating cache with newly uploaded data...')
+
+        // 最新の成功したレコードを取得
+        const newDataResult = await client.query(`
+          SELECT * FROM prtimes_companies
+          WHERE created_at >= $1
+          AND company_website IS NOT NULL
+          AND company_website != ''
+          AND company_website != '-'
+          ORDER BY created_at DESC
+        `, [new Date(Date.now() - 60000)]) // 1分前から取得（余裕を持たせる）
+
+        // キャッシュ更新関数を動的にインポート
+        const searchModule = await import('../search/route')
+        const { updateCacheWithNewData, refreshCacheInBackground } = searchModule
+
+        if (newDataResult.rows.length > 0) {
+          // 増分キャッシュ更新
+          updateCacheWithNewData(newDataResult.rows)
+
+          // バックグラウンドで完全なキャッシュ再構築
+          refreshCacheInBackground()
+
+          console.log(`✅ Cache updated with ${newDataResult.rows.length} new companies`)
+        }
+      } catch (cacheError) {
+        console.error('⚠️ Cache update failed, but upload was successful:', cacheError)
+        // キャッシュ更新に失敗してもアップロード自体は成功扱い
+      }
+    }
   } catch (error) {
     console.error('❌ Error in async CSV processing:', error)
     // エラー時は失敗ステータスに更新

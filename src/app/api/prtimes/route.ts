@@ -16,10 +16,25 @@ export async function GET(request: NextRequest) {
     const client = await pool.connect()
     
     try {
-      const countResult = await client.query(
-        'SELECT COUNT(*) FROM prtimes_companies'
-      )
-      const totalCount = parseInt(countResult.rows[0].count)
+      // 全件数とユニーク企業数を並列取得
+      const [totalResult, uniqueResult] = await Promise.all([
+        client.query('SELECT COUNT(*) as total FROM prtimes_companies'),
+        client.query(`
+          SELECT COUNT(DISTINCT company_website) as unique
+          FROM prtimes_companies
+          WHERE company_website IS NOT NULL
+          AND company_website != ''
+          AND company_website != '-'
+        `)
+      ])
+
+      const totalCount = parseInt(totalResult.rows[0].total)
+      const uniqueCount = parseInt(uniqueResult.rows[0].unique)
+
+      console.log('🔍 Debug - totalResult:', totalResult.rows[0])
+      console.log('🔍 Debug - uniqueResult:', uniqueResult.rows[0])
+      console.log('🔍 Debug - totalCount:', totalCount)
+      console.log('🔍 Debug - uniqueCount:', uniqueCount)
       
       const companiesResult = await client.query(
         `SELECT * FROM prtimes_companies 
@@ -60,6 +75,7 @@ export async function GET(request: NextRequest) {
           currentPage: page,
           totalPages,
           totalCount,
+          uniqueCount,
           hasNextPage: page < totalPages,
           hasPrevPage: page > 1
         }

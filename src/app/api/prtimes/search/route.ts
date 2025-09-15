@@ -14,6 +14,7 @@ let LISTING_INDEX = new Map<string, any[]>()
 let PRESS_TYPE_INDEX = new Map<string, any[]>()
 let CACHE_INITIALIZED = false
 let CACHE_INITIALIZING = false
+let TOTAL_RAW_COUNT = 0 // 重複除去前の全件数
 
 export async function POST(request: NextRequest) {
   const startTime = Date.now()
@@ -112,6 +113,9 @@ export async function POST(request: NextRequest) {
 
           const companiesResult = await client.query(searchQuery)
           console.log(`📊 Loaded ${companiesResult.rows.length} companies from database`)
+
+          // 全件数を保存
+          TOTAL_RAW_COUNT = companiesResult.rows.length
 
           // ドメインベース重複除去
           const domainMap = new Map()
@@ -339,6 +343,8 @@ export async function POST(request: NextRequest) {
         currentPage: page,
         totalPages,
         totalCount,
+        totalRawCount: TOTAL_RAW_COUNT,
+        uniqueCount: COMPANIES_CACHE.length,
         hasNextPage: page < totalPages,
         hasPrevPage: page > 1
       },

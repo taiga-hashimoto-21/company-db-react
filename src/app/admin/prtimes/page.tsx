@@ -26,7 +26,8 @@ export default function AdminPRTimesPage() {
     errors: string[]
   } | null>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [totalCount, setTotalCount] = useState(0)
+  const [totalCount, setTotalCount] = useState(0) // 重複除去前の全件数
+  const [uniqueCount, setUniqueCount] = useState(0) // 重複除去後のユニーク件数
   const [uploads, setUploads] = useState<any[]>([])
   const [uploadsLoading, setUploadsLoading] = useState(false)
   const [notification, setNotification] = useState<{message: string, visible: boolean}>({
@@ -94,7 +95,8 @@ export default function AdminPRTimesPage() {
 
       const data = await response.json()
       setAllCompanies(data.companies)
-      setTotalCount(data.pagination.totalCount)
+      setTotalCount(data.pagination.totalRawCount || data.pagination.totalCount) // 全件数
+      setUniqueCount(data.pagination.uniqueCount || data.companies.length) // ユニーク企業数
       setHasMoreAdminData(false) // 全データ取得済み
     } catch (error) {
       console.error('Error fetching companies:', error)
@@ -118,7 +120,8 @@ export default function AdminPRTimesPage() {
         setAllCompanies(data.companies)
       }
       
-      setTotalCount(data.pagination.totalCount)
+      setTotalCount(data.pagination.totalCount) // 全件数
+      setUniqueCount(data.pagination.uniqueCount) // ユニーク企業数（APIから取得）
       setHasMoreAdminData(data.pagination.hasNextPage)
     } catch (error) {
       console.error('Error fetching companies:', error)
@@ -576,7 +579,7 @@ export default function AdminPRTimesPage() {
         <div className="smarthr-card w-full">
           <div className="mb-6">
             <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-1">
-              登録済みデータ ({loading ? '読み込み中...' : `ユニーク企業${formatNumber(displayCompanies.length)}件 / 全${formatNumber(totalCount)}件`})
+              登録済みデータ ({loading ? '読み込み中...' : `ユニーク企業${formatNumber(uniqueCount)}件 / 全${formatNumber(totalCount)}件`})
             </h2>
           </div>
           <div>

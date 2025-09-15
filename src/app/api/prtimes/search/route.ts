@@ -82,6 +82,22 @@ export async function POST(request: NextRequest) {
       CACHE_INITIALIZING = true
       console.log('🚀 Initializing companies cache...')
 
+      // タイムアウト設定（30秒）
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Cache initialization timeout')), 30000)
+      })
+
+      try {
+        await Promise.race([initializeCacheInternal(), timeoutPromise])
+      } catch (error) {
+        console.error('❌ Cache initialization failed:', error)
+        CACHE_INITIALIZED = false
+        CACHE_INITIALIZING = false
+      }
+    }
+
+    // 実際のキャッシュ初期化処理
+    async function initializeCacheInternal() {
       try {
         const client = await pool.connect()
 
@@ -187,13 +203,60 @@ export async function POST(request: NextRequest) {
       await initializeCache()
     }
 
-    // キャッシュが利用できない場合の警告
+    // キャッシュが利用できない場合は従来の方法にフォールバック
     if (!CACHE_INITIALIZED) {
       console.warn('⚠️ Cache not available, falling back to database query')
-      return NextResponse.json(
-        { error: 'Search service temporarily unavailable' },
-        { status: 503 }
-      )
+
+      // フォールバック: 従来のデータベース検索
+      const client = await pool.connect()
+      try {
+        const searchQuery = `
+          SELECT *
+          FROM prtimes_companies
+          WHERE company_website IS NOT NULL AND company_website != '' AND company_website != '-'
+          ORDER BY delivery_date DESC
+          LIMIT 1000
+        `
+
+        const companiesResult = await client.query(searchQuery)
+        const responseTime = Date.now() - startTime
+
+        return NextResponse.json({
+          companies: companiesResult.rows.slice(0, 50).map(row => ({
+            id: row.id,
+            deliveryDate: row.delivery_date,
+            pressReleaseUrl: row.press_release_url,
+            pressReleaseTitle: row.press_release_title,
+            pressReleaseCategory1: row.press_release_category1,
+            pressReleaseCategory2: row.press_release_category2,
+            companyName: row.company_name,
+            companyWebsite: row.company_website,
+            industry: row.business_category,
+            address: row.address,
+            phoneNumber: row.phone_number,
+            representative: row.representative,
+            listingStatus: row.listing_status,
+            capitalAmountText: row.capital_amount_text,
+            establishedDateText: row.established_date_text,
+            capitalAmountNumeric: row.capital_amount_numeric,
+            establishedYear: row.established_year,
+            establishedMonth: row.established_month,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at
+          })),
+          pagination: {
+            currentPage: 1,
+            totalPages: Math.ceil(companiesResult.rows.length / 50),
+            totalCount: companiesResult.rows.length,
+            hasNextPage: companiesResult.rows.length > 50,
+            hasPrevPage: false
+          },
+          _responseTime: responseTime,
+          _cache: 'fallback'
+        })
+      } finally {
+        client.release()
+      }
     }
 
     // 高速フィルタリング（メモリ内検索）

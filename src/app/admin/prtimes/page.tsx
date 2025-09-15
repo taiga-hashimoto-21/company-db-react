@@ -38,11 +38,13 @@ export default function AdminPRTimesPage() {
     processed: number
     total: number
     errors: number
+    fileName: string
   }>({
     show: false,
     processed: 0,
     total: 0,
-    errors: 0
+    errors: 0,
+    fileName: ''
   })
 
   // ローディング中は何もしない
@@ -78,12 +80,18 @@ export default function AdminPRTimesPage() {
 
   const loadAllAdminData = useCallback(async () => {
     setLoading(true)
-    
+
     try {
-      // 全データを取得するため大きなlimitを設定
-      const response = await fetch(`/api/prtimes?page=1&limit=10000`)
+      // 検索APIを使って全ユニーク企業データを取得
+      const response = await fetch('/api/prtimes/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ exportAll: true })
+      })
       if (!response.ok) throw new Error('Failed to fetch companies')
-      
+
       const data = await response.json()
       setAllCompanies(data.companies)
       setTotalCount(data.pagination.totalCount)
@@ -119,28 +127,37 @@ export default function AdminPRTimesPage() {
     }
   }, [])
 
-  // 管理者画面用データの生成（企業単位でユニーク化、会社名+ホームページURLのみで判定）
+  // ドメイン抽出関数
+  const extractDomain = useCallback((url: string | null | undefined): string | null => {
+    if (!url || !url.trim()) return null
+    try {
+      const cleanUrl = url.trim()
+      // httpまたはhttpsで始まらない場合は追加
+      const fullUrl = cleanUrl.match(/^https?:\/\//) ? cleanUrl : `https://${cleanUrl}`
+      const domain = new URL(fullUrl).hostname.toLowerCase()
+      // www.を除去
+      return domain.replace(/^www\./, '')
+    } catch {
+      return null
+    }
+  }, [])
+
+  // 会社名正規化関数
+  const normalizeCompanyName = useCallback((name: string | null | undefined): string => {
+    if (!name || !name.trim()) return 'no-name'
+    return name.trim()
+      .toLowerCase()
+      .replace(/株式会社|（株）|\(株\)|有限会社|合同会社|co\.,ltd\.|ltd\.|inc\.|corp\./g, '')
+      .replace(/\s+/g, '')
+  }, [])
+
+  // 管理者画面用データの生成（検索APIで既にユニーク化済み）
   const displayCompanies = useMemo(() => {
-    const uniqueCompaniesMap = new Map()
-    
-    allCompanies.forEach(company => {
-      // 会社名とホームページURLのみで重複除去
-      const websiteKey = company.companyWebsite?.trim() || 'no-website'
-      const companyNameKey = company.companyName?.trim() || 'no-name'
-      const key = `${websiteKey}_${companyNameKey}`
-      
-      if (!uniqueCompaniesMap.has(key)) {
-        uniqueCompaniesMap.set(key, [])
-      }
-      uniqueCompaniesMap.get(key).push(company)
-    })
-    
-    return Array.from(uniqueCompaniesMap.values()).map(companyGroup => {
-      const sortedCompanies = companyGroup.sort((a, b) => 
-        new Date(b.deliveryDate).getTime() - new Date(a.deliveryDate).getTime()
-      )
-      return { ...sortedCompanies[0], pressReleaseCount: companyGroup.length }
-    }).sort((a, b) => a.companyName.localeCompare(b.companyName))
+    // 検索APIで既にDISTINCT ON (company_name, company_website)済みなので
+    // フロントエンドでの重複除去は不要、ソートのみ
+    return allCompanies
+      .map(company => ({ ...company, pressReleaseCount: 1 }))
+      .sort((a, b) => a.companyName.localeCompare(b.companyName))
   }, [allCompanies])
 
   const fetchUploads = useCallback(async () => {
@@ -179,7 +196,8 @@ export default function AdminPRTimesPage() {
           ...prev,
           processed: progress.processed,
           total: progress.total,
-          errors: progress.errors
+          errors: progress.errors,
+          fileName: prev.fileName // ファイル名を保持
         }))
         
         // まだ処理中なら続行（より頻繁にチェック）
@@ -205,7 +223,7 @@ export default function AdminPRTimesPage() {
           }
           
           setTimeout(() => {
-            setUploadProgress(prev => ({ ...prev, show: false }))
+            setUploadProgress(prev => ({ ...prev, show: false, fileName: '' }))
           }, 3000) // 3秒後にプログレスバーを非表示
         }
       } catch (error) {
@@ -260,36 +278,40 @@ export default function AdminPRTimesPage() {
       return
     }
 
+    // アップロード中のファイル名を最初に保存（selectedFileがnullになる前に）
+    const fileName = selectedFile.name
+
     setUploading(true)
-    
+
     // CSVの行数を事前に取得してプログレスバーの初期設定
     const fileContent = await selectedFile.text()
     const lines = fileContent.split('\n').filter(line => line.trim() !== '')
     const totalRows = Math.max(0, lines.length - 2) // ヘッダーを除く
-    
+
     setUploadProgress({
       show: true,
       processed: 0,
       total: totalRows,
-      errors: 0
+      errors: 0,
+      fileName: fileName
     })
-    
+
     try {
       const formData = new FormData()
       formData.append('file', selectedFile)
-      
+
       const response = await fetch('/api/prtimes/upload', {
         method: 'POST',
         body: formData
       })
-      
+
       if (!response.ok) {
         throw new Error(`Upload failed: ${response.status}`)
       }
-      
+
       const result = await response.json()
       console.log('📤 Upload started:', result)
-      
+
       // アップロード開始後、進捗を監視
       if (result.batchId) {
         console.log('🎯 Starting progress monitoring for batchId:', result.batchId)
@@ -297,11 +319,11 @@ export default function AdminPRTimesPage() {
       } else {
         console.error('❌ No batchId in upload result')
       }
-      
+
       // 非同期処理のため、ここではファイル入力をクリアするのみ
       setUploadResult(null)
       setSelectedFile(null)
-      
+
       const fileInput = document.getElementById('csvFile') as HTMLInputElement
       if (fileInput) fileInput.value = ''
       
@@ -310,6 +332,10 @@ export default function AdminPRTimesPage() {
       showNotification('アップロードに失敗しました')
     } finally {
       setUploading(false)
+      // エラー時はプログレスバーとファイル名をクリア
+      if (!uploadProgress.show) {
+        setUploadProgress(prev => ({ ...prev, fileName: '' }))
+      }
     }
   }
 
@@ -414,7 +440,7 @@ export default function AdminPRTimesPage() {
               {(uploading || uploadProgress.show) && (
                 <div className="mt-4">
                   <div className="mb-2 flex justify-between text-sm">
-                    <span className="text-[var(--text-secondary)]">CSV処理中...</span>
+                    <span className="text-[var(--text-secondary)]">CSV処理中... ({uploadProgress.fileName})</span>
                     <span className="text-[var(--text-primary)]">
                       {uploadProgress.processed} / {uploadProgress.total} 件 ({Math.round((uploadProgress.processed / uploadProgress.total) * 100)}%)
                     </span>

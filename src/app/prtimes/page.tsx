@@ -174,56 +174,46 @@ export default function PRTimesPage() {
     }
   }, [])
 
-  // テーブル表示用データの生成（企業単位でユニーク化、最新のプレスリリースのみ）
+  // ドメイン抽出関数
+  const extractDomain = useCallback((url: string | null | undefined): string | null => {
+    if (!url || !url.trim()) return null
+    try {
+      const cleanUrl = url.trim()
+      // httpまたはhttpsで始まらない場合は追加
+      const fullUrl = cleanUrl.match(/^https?:\/\//) ? cleanUrl : `https://${cleanUrl}`
+      const domain = new URL(fullUrl).hostname.toLowerCase()
+      // www.を除去
+      return domain.replace(/^www\./, '')
+    } catch {
+      return null
+    }
+  }, [])
+
+  // 会社名正規化関数
+  const normalizeCompanyName = useCallback((name: string | null | undefined): string => {
+    if (!name || !name.trim()) return 'no-name'
+    return name.trim()
+      .toLowerCase()
+      .replace(/株式会社|（株）|\(株\)|有限会社|合同会社|co\.,ltd\.|ltd\.|inc\.|corp\./g, '')
+      .replace(/\s+/g, '')
+  }, [])
+
+  // テーブル表示用データの生成（バックエンドで既にドメインベース重複除去済み）
   const displayCompanies = useMemo(() => {
-    const uniqueCompaniesMap = new Map()
-    
-    companies.forEach(company => {
-      const representative = company.representative && company.representative.trim() !== '' && company.representative.trim() !== '-'
-        ? company.representative 
-        : 'ご担当者'
-      
-      const key = `${company.companyWebsite}_${company.companyName}_${representative}`
-      
-      if (!uniqueCompaniesMap.has(key)) {
-        uniqueCompaniesMap.set(key, [])
-      }
-      uniqueCompaniesMap.get(key).push(company)
-    })
-    
-    // 各企業グループから最新のプレスリリースを選択し、件数を付加
-    return Array.from(uniqueCompaniesMap.values()).map(companyGroup => {
-      // 配信日で降順ソートして最新を取得
-      const sortedCompanies = companyGroup.sort((a, b) => 
-        new Date(b.deliveryDate).getTime() - new Date(a.deliveryDate).getTime()
-      )
-      const latestCompany = sortedCompanies[0]
-      
-      return {
-        ...latestCompany,
-        pressReleaseCount: companyGroup.length
-      }
-    })
+    // バックエンドで既にドメインベース重複除去済みなので、そのまま使用
+    return companies.map(company => ({
+      ...company,
+      pressReleaseCount: 1 // バックエンドで各ドメインから1件選択済み
+    }))
   }, [companies])
 
-  // コピー用データの生成（重複企業を除外）
+  // コピー用データの生成（displayCompaniesは既に重複除去済み）
   const copyData = useMemo(() => {
-    // 会社名・ホームページURL・代表者名でユニーク化
-    const uniqueCompanies = displayCompanies.reduce((acc, company) => {
+    return displayCompanies.map(company => {
       const representative = company.representative && company.representative.trim() !== '' && company.representative.trim() !== '-'
-        ? company.representative 
+        ? company.representative
         : 'ご担当者'
-      
-      const key = `${company.companyWebsite}_${company.companyName}_${representative}`
-      
-      if (!acc.has(key)) {
-        acc.set(key, { ...company, processedRepresentative: representative })
-      }
-      
-      return acc
-    }, new Map())
-    
-    return Array.from(uniqueCompanies.values()).map(company => {
+
       switch (copyFormat) {
         case 'url':
           return company.companyWebsite
@@ -231,7 +221,7 @@ export default function PRTimesPage() {
           return `${company.companyWebsite},${company.companyName}`
         case 'url_name_rep':
         default:
-          return `${company.companyWebsite},${company.companyName},${company.processedRepresentative}`
+          return `${company.companyWebsite},${company.companyName},${representative}`
       }
     }).join('\n')
   }, [displayCompanies, copyFormat])
@@ -320,14 +310,9 @@ export default function PRTimesPage() {
       }
       
       const data = await response.json()
-      
-      // フィルタリングされた企業のみを使用（ホームページURLがある企業のみ）
-      const filteredCompanies = data.companies.filter((company: PRTimesCompany) => 
-        company.companyWebsite && company.companyWebsite.trim() !== ''
-      )
-      
-      // ラジオボタンの選択に応じてCSVデータを生成
-      const csvData = filteredCompanies.map((company: PRTimesCompany) => {
+
+      // バックエンドで既にドメインベース重複除去済みなので、そのまま使用
+      const csvData = data.companies.map((company: PRTimesCompany) => {
         const representative = company.representative && company.representative.trim() !== '' 
           ? company.representative 
           : 'ご担当者'

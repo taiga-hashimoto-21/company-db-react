@@ -29,15 +29,58 @@ export function PRTimesSearch({ onSearch, onReset, loading, realtime = true }: P
     deliveryDateTo: ''
   })
 
-  const [categories, setCategories] = useState<{
-    industry: string[]
-    pressReleaseTypes: string[]
-    listing_status: string[]
-  }>({
-    industry: [],
-    pressReleaseTypes: [],
-    listing_status: []
-  })
+  // 固定のカテゴリリスト
+  const categories = {
+    industry: [
+      'サービス業',
+      '不動産業',
+      '倉庫・運輸関連業',
+      '医療・福祉',
+      '商業（卸売業、小売業）',
+      '官公庁・地方自治体',
+      '建設業',
+      '情報通信',
+      '教育・学習支援業',
+      '水産・農林業',
+      '製造業',
+      '財団法人・社団法人・宗教法人',
+      '金融・保険業',
+      '鉱業',
+      '電気・ガス業',
+      '飲食店・宿泊業'
+    ],
+    pressReleaseTypes: [
+      'その他',
+      'イベント',
+      'キャンペーン',
+      '上場企業決算発表',
+      '人物',
+      '商品サービス',
+      '経営情報',
+      '調査レポート'
+    ],
+    listing_status: [
+      'JASDAQ',
+      'JASDAQグロース',
+      'JASDAQスタンダード',
+      'その他国内市場',
+      'セントレックス',
+      'マザーズ',
+      '名証2部',
+      '名証ネクスト',
+      '名証メイン',
+      '大証2部',
+      '未上場',
+      '札証',
+      '東証1部',
+      '東証2部',
+      '東証グロース',
+      '東証スタンダード',
+      '東証プライム',
+      '海外市場',
+      '福証'
+    ]
+  }
 
   // デバウンスされたリアルタイム検索関数
   const debouncedSearch = useCallback(
@@ -55,26 +98,6 @@ export function PRTimesSearch({ onSearch, onReset, loading, realtime = true }: P
       debouncedSearch(filters)
     }
   }, [filters, debouncedSearch, realtime])
-
-  useEffect(() => {
-    const fetchCategories = async () => {
-      try {
-        const response = await fetch('/api/prtimes/categories')
-        if (response.ok) {
-          const data = await response.json()
-          setCategories({
-            industry: data.industries || [],
-            pressReleaseTypes: data.pressReleaseTypes || [],
-            listing_status: data.listingStatuses || []
-          })
-        }
-      } catch (error) {
-        console.error('Failed to fetch categories:', error)
-      }
-    }
-    
-    fetchCategories()
-  }, [])
 
   const handleInputChange = (field: keyof PRTimesSearchFilters, value: any) => {
     setFilters(prev => ({ ...prev, [field]: value }))

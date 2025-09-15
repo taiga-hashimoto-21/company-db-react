@@ -110,29 +110,79 @@ export async function POST(request: NextRequest) {
     
     const whereClause = `WHERE ${conditions.join(' AND ')}`
     
+    // ドメイン抽出関数
+    function extractDomain(url) {
+      if (!url || !url.trim()) return null
+      try {
+        const cleanUrl = url.trim()
+        // httpまたはhttpsで始まらない場合は追加
+        const fullUrl = cleanUrl.match(/^https?:\/\//) ? cleanUrl : `https://${cleanUrl}`
+        const domain = new URL(fullUrl).hostname.toLowerCase()
+        // www.を除去
+        return domain.replace(/^www\./, '')
+      } catch {
+        return null
+      }
+    }
+
+    // 会社名正規化関数
+    function normalizeCompanyName(name) {
+      if (!name || !name.trim()) return 'no-name'
+      return name.trim()
+        .toLowerCase()
+        .replace(/株式会社|（株）|\(株\)|有限会社|合同会社|co\.,ltd\.|ltd\.|inc\.|corp\./g, '')
+        .replace(/\s+/g, '')
+    }
+
     const client = await pool.connect()
-    
+
     try {
-      const countQuery = `SELECT COUNT(*) FROM (SELECT DISTINCT company_name, company_website FROM prtimes_companies ${whereClause}) AS distinct_companies`
-      const countResult = await client.query(countQuery, params)
-      const totalCount = parseInt(countResult.rows[0].count)
-      
+      // 全データを取得してJavaScript側で重複除去
       const searchQuery = `
-        SELECT DISTINCT ON (company_name, company_website) * 
-        FROM prtimes_companies 
+        SELECT *
+        FROM prtimes_companies
         ${whereClause}
-        ORDER BY company_name, company_website, delivery_date DESC 
-        LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+        ORDER BY delivery_date DESC
       `
-      
-      const searchParams = [...params, actualLimit, offset]
-      const companiesResult = await client.query(searchQuery, searchParams)
+
+      const companiesResult = await client.query(searchQuery, params)
+
+      // ドメインベース重複除去
+      const domainMap = new Map()
+
+      companiesResult.rows.forEach(company => {
+        const domain = extractDomain(company.company_website)
+        const normalizedName = normalizeCompanyName(company.company_name)
+
+        // ドメインがある場合はドメインをキーに、ない場合は正規化した会社名をキーに
+        const key = domain || normalizedName
+
+        if (!domainMap.has(key)) {
+          domainMap.set(key, [])
+        }
+        domainMap.get(key).push(company)
+      })
+
+      // 各グループから最新のプレスリリースを選択
+      const uniqueCompanies = Array.from(domainMap.values()).map(companyGroup => {
+        const sortedCompanies = companyGroup.sort((a, b) =>
+          new Date(b.delivery_date).getTime() - new Date(a.delivery_date).getTime()
+        )
+        return sortedCompanies[0]
+      })
+
+      const totalCount = uniqueCompanies.length
+
+      // ページネーション処理
+      const startIndex = exportAll ? 0 : offset
+      const endIndex = exportAll ? uniqueCompanies.length : offset + actualLimit
+      const paginatedCompanies = uniqueCompanies.slice(startIndex, endIndex)
       
       const totalPages = Math.ceil(totalCount / actualLimit)
       const responseTime = Date.now() - startTime
-      
+
       return NextResponse.json({
-        companies: companiesResult.rows.map(row => ({
+        companies: paginatedCompanies.map(row => ({
           id: row.id,
           deliveryDate: row.delivery_date,
           pressReleaseUrl: row.press_release_url,

@@ -203,60 +203,13 @@ export async function POST(request: NextRequest) {
       await initializeCache()
     }
 
-    // キャッシュが利用できない場合は従来の方法にフォールバック
+    // キャッシュが利用できない場合はエラーを返す
     if (!CACHE_INITIALIZED) {
-      console.warn('⚠️ Cache not available, falling back to database query')
-
-      // フォールバック: 従来のデータベース検索
-      const client = await pool.connect()
-      try {
-        const searchQuery = `
-          SELECT *
-          FROM prtimes_companies
-          WHERE company_website IS NOT NULL AND company_website != '' AND company_website != '-'
-          ORDER BY delivery_date DESC
-          LIMIT 1000
-        `
-
-        const companiesResult = await client.query(searchQuery)
-        const responseTime = Date.now() - startTime
-
-        return NextResponse.json({
-          companies: companiesResult.rows.slice(0, 50).map(row => ({
-            id: row.id,
-            deliveryDate: row.delivery_date,
-            pressReleaseUrl: row.press_release_url,
-            pressReleaseTitle: row.press_release_title,
-            pressReleaseCategory1: row.press_release_category1,
-            pressReleaseCategory2: row.press_release_category2,
-            companyName: row.company_name,
-            companyWebsite: row.company_website,
-            industry: row.business_category,
-            address: row.address,
-            phoneNumber: row.phone_number,
-            representative: row.representative,
-            listingStatus: row.listing_status,
-            capitalAmountText: row.capital_amount_text,
-            establishedDateText: row.established_date_text,
-            capitalAmountNumeric: row.capital_amount_numeric,
-            establishedYear: row.established_year,
-            establishedMonth: row.established_month,
-            createdAt: row.created_at,
-            updatedAt: row.updated_at
-          })),
-          pagination: {
-            currentPage: 1,
-            totalPages: Math.ceil(companiesResult.rows.length / 50),
-            totalCount: companiesResult.rows.length,
-            hasNextPage: companiesResult.rows.length > 50,
-            hasPrevPage: false
-          },
-          _responseTime: responseTime,
-          _cache: 'fallback'
-        })
-      } finally {
-        client.release()
-      }
+      console.error('❌ Cache not available, search service unavailable')
+      return NextResponse.json(
+        { error: 'Search service temporarily unavailable. Please try again later.' },
+        { status: 503 }
+      )
     }
 
     // 高速フィルタリング（メモリ内検索）

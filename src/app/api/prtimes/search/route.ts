@@ -159,7 +159,16 @@ async function globalInitializeCacheInternal() {
     const client = await pool.connect()
 
     try {
-      // 全件取得
+      // 全件数をまず取得（進捗表示用）
+      const countResult = await client.query(`
+        SELECT COUNT(*) as total
+        FROM prtimes_companies
+        WHERE company_website IS NOT NULL AND company_website != '' AND company_website != '-'
+      `)
+      const totalRows = parseInt(countResult.rows[0].total)
+      console.log(`📊 Total companies to process: ${totalRows}`)
+
+      // 全件取得（クエリにタイムアウト設定）
       const searchQuery = `
         SELECT *
         FROM prtimes_companies
@@ -167,18 +176,48 @@ async function globalInitializeCacheInternal() {
         ORDER BY delivery_date DESC
       `
 
+      // クエリタイムアウトを設定（60秒）
+      client.query('SET statement_timeout = 60000')
       const result = await client.query(searchQuery)
       console.log(`📊 Loaded ${result.rows.length} companies from database`)
 
-      // ドメインベースの重複除去
+      // 安全なドメイン抽出関数
+      function extractDomainSafe(url: string): string | null {
+        if (!url || !url.trim()) return null
+        try {
+          const cleanUrl = url.trim()
+          const fullUrl = cleanUrl.match(/^https?:\/\//) ? cleanUrl : `https://${cleanUrl}`
+          const domain = new URL(fullUrl).hostname.toLowerCase()
+          return domain.replace(/^www\./, '')
+        } catch {
+          return null
+        }
+      }
+
+      // 会社名正規化関数
+      function normalizeCompanyName(name: string): string {
+        if (!name || !name.trim()) return 'no-name'
+        return name.trim()
+          .toLowerCase()
+          .replace(/株式会社|（株）|\(株\)|有限会社|合同会社|co\.,ltd\.|ltd\.|inc\.|corp\./g, '')
+          .replace(/\s+/g, '')
+      }
+
+      // ドメインベースの重複除去（エラーハンドリング強化）
       const companyMap = new Map()
+      let processedCount = 0
+      let errorCount = 0
+
       result.rows.forEach(row => {
         try {
-          const domain = new URL(row.company_website).hostname.toLowerCase()
-          const existingCompany = companyMap.get(domain)
+          const domain = extractDomainSafe(row.company_website)
+          const normalizedName = normalizeCompanyName(row.company_name)
+          const key = domain || normalizedName || `fallback_${row.id}`
+
+          const existingCompany = companyMap.get(key)
 
           if (!existingCompany || new Date(row.delivery_date) > new Date(existingCompany.delivery_date)) {
-            companyMap.set(domain, {
+            companyMap.set(key, {
               id: row.id,
               deliveryDate: row.delivery_date,
               pressReleaseUrl: row.press_release_url,
@@ -204,13 +243,17 @@ async function globalInitializeCacheInternal() {
               updatedAt: row.updated_at
             })
           }
+          processedCount++
         } catch (error) {
-          // 無効なURLは除外
+          errorCount++
+          console.warn(`⚠️ Error processing row ${row.id}:`, error.message)
         }
       })
 
       COMPANIES_CACHE = Array.from(companyMap.values())
+      TOTAL_RAW_COUNT = totalRows
       console.log(`✅ Deduplicated to ${COMPANIES_CACHE.length} unique companies`)
+      console.log(`📊 Processed: ${processedCount}, Errors: ${errorCount}`)
 
       // インデックス構築
       console.log('🔍 Building search indexes...')
@@ -290,6 +333,230 @@ export function refreshCacheInBackground() {
   }, 2000) // 2秒後に開始
 }
 
+// フォールバック検索（データベース直接検索）
+async function performFallbackSearch(body: any, startTime: number) {
+  console.log('🔍 Performing fallback database search...')
+
+  const {
+    companyName,
+    industry,
+    pressReleaseType,
+    listingStatus,
+    capitalMin,
+    capitalMax,
+    establishedYearMin,
+    establishedYearMax,
+    deliveryDateFrom,
+    deliveryDateTo,
+    page = 1,
+    limit = 1000000,
+    exportAll = false,
+    tableOnly = false
+  } = body
+
+  const actualLimit = tableOnly ? 50 : (exportAll ? 1000000 : limit)
+  const offset = exportAll ? 0 : (page - 1) * actualLimit
+
+  const client = await pool.connect()
+
+  try {
+    // WHERE条件を構築
+    const conditions: string[] = [
+      "company_website IS NOT NULL",
+      "company_website != ''",
+      "company_website != '-'"
+    ]
+    const params: any[] = []
+    let paramIndex = 1
+
+    if (companyName) {
+      conditions.push(`company_name ILIKE $${paramIndex}`)
+      params.push(`%${companyName}%`)
+      paramIndex++
+    }
+
+    if (industry && industry.length > 0) {
+      conditions.push(`(business_category = ANY($${paramIndex}) OR industry_category = ANY($${paramIndex}))`)
+      params.push(industry)
+      paramIndex++
+    }
+
+    if (pressReleaseType && pressReleaseType.length > 0) {
+      conditions.push(`press_release_type = ANY($${paramIndex})`)
+      params.push(pressReleaseType)
+      paramIndex++
+    }
+
+    if (listingStatus && listingStatus.length > 0) {
+      conditions.push(`listing_status = ANY($${paramIndex})`)
+      params.push(listingStatus)
+      paramIndex++
+    }
+
+    if (capitalMin !== undefined && capitalMin > 0) {
+      conditions.push(`capital_amount_numeric >= $${paramIndex}`)
+      params.push(capitalMin)
+      paramIndex++
+    }
+
+    if (capitalMax !== undefined && capitalMax > 0) {
+      conditions.push(`capital_amount_numeric <= $${paramIndex}`)
+      params.push(capitalMax)
+      paramIndex++
+    }
+
+    if (establishedYearMin !== undefined && establishedYearMin > 0) {
+      conditions.push(`established_year >= $${paramIndex}`)
+      params.push(establishedYearMin)
+      paramIndex++
+    }
+
+    if (establishedYearMax !== undefined && establishedYearMax > 0) {
+      conditions.push(`established_year <= $${paramIndex}`)
+      params.push(establishedYearMax)
+      paramIndex++
+    }
+
+    if (deliveryDateFrom) {
+      conditions.push(`delivery_date >= $${paramIndex}`)
+      params.push(new Date(deliveryDateFrom))
+      paramIndex++
+    }
+
+    if (deliveryDateTo) {
+      conditions.push(`delivery_date <= $${paramIndex}`)
+      params.push(new Date(deliveryDateTo))
+      paramIndex++
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+
+    // 総件数取得
+    const countQuery = `
+      SELECT COUNT(DISTINCT
+        CASE
+          WHEN company_website ~ '^https?://' THEN
+            regexp_replace(
+              regexp_replace(company_website, '^https?://', ''),
+              '/.*$', ''
+            )
+          ELSE company_website
+        END
+      ) as total
+      FROM prtimes_companies
+      ${whereClause}
+    `
+
+    const countResult = await client.query(countQuery, params)
+    const totalCount = parseInt(countResult.rows[0].total)
+
+    // データ取得（重複除去）
+    const dataQuery = `
+      WITH deduplicated AS (
+        SELECT DISTINCT ON (
+          CASE
+            WHEN company_website ~ '^https?://' THEN
+              regexp_replace(
+                regexp_replace(company_website, '^https?://', ''),
+                '/.*$', ''
+              )
+            ELSE company_website
+          END
+        ) *
+        FROM prtimes_companies
+        ${whereClause}
+        ORDER BY
+          CASE
+            WHEN company_website ~ '^https?://' THEN
+              regexp_replace(
+                regexp_replace(company_website, '^https?://', ''),
+                '/.*$', ''
+              )
+            ELSE company_website
+          END,
+          delivery_date DESC
+      )
+      SELECT * FROM deduplicated
+      ORDER BY delivery_date DESC
+      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+    `
+
+    const dataResult = await client.query(dataQuery, [...params, actualLimit, offset])
+
+    const responseTime = Date.now() - startTime
+    console.log(`✅ Fallback search completed: ${totalCount} results in ${responseTime}ms`)
+
+    return NextResponse.json({
+      companies: dataResult.rows.map(row => ({
+        id: row.id,
+        deliveryDate: row.delivery_date,
+        pressReleaseUrl: row.press_release_url,
+        pressReleaseTitle: row.press_release_title,
+        pressReleaseType: row.press_release_type,
+        pressReleaseCategory1: row.press_release_category1,
+        pressReleaseCategory2: row.press_release_category2,
+        companyName: row.company_name,
+        companyWebsite: row.company_website,
+        businessCategory: row.business_category,
+        industryCategory: row.industry_category,
+        industry: row.business_category || row.industry_category,
+        address: row.address,
+        phoneNumber: row.phone_number,
+        representative: row.representative,
+        listingStatus: row.listing_status,
+        capitalAmountText: row.capital_amount_text,
+        establishedDateText: row.established_date_text,
+        capitalAmountNumeric: row.capital_amount_numeric,
+        establishedYear: row.established_year,
+        establishedMonth: row.established_month,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at
+      })),
+      pagination: {
+        currentPage: page,
+        totalPages: Math.ceil(totalCount / actualLimit),
+        totalCount,
+        totalRawCount: null, // フォールバック時は生データ件数は取得しない
+        uniqueCount: totalCount,
+        hasNextPage: page < Math.ceil(totalCount / actualLimit),
+        hasPrevPage: page > 1
+      },
+      _responseTime: responseTime,
+      _cache: 'fallback',
+      cacheStatus: 'unavailable'
+    })
+
+  } finally {
+    client.release()
+  }
+}
+
+export async function GET(request: NextRequest) {
+  // キャッシュステータス確認用エンドポイント
+  const searchParams = request.nextUrl.searchParams
+  const forceRefresh = searchParams.get('forceRefresh') === 'true'
+
+  if (forceRefresh) {
+    console.log('🔄 Force refreshing cache via GET request...')
+    CACHE_INITIALIZED = false
+    await globalInitializeCache()
+  }
+
+  return NextResponse.json({
+    cacheInitialized: CACHE_INITIALIZED,
+    cacheInitializing: CACHE_INITIALIZING,
+    totalCount: CACHE_INITIALIZED ? COMPANIES_CACHE.length : null,
+    totalRawCount: CACHE_INITIALIZED ? TOTAL_RAW_COUNT : null,
+    indexSizes: CACHE_INITIALIZED ? {
+      industries: INDUSTRY_INDEX.size,
+      capitalRanges: CAPITAL_INDEX.size,
+      listingStatuses: LISTING_INDEX.size,
+      pressReleaseTypes: PRESS_TYPE_INDEX.size
+    } : null,
+    cacheStatus: CACHE_INITIALIZED ? 'ready' : (CACHE_INITIALIZING ? 'initializing' : 'not_initialized')
+  })
+}
+
 export async function POST(request: NextRequest) {
   const startTime = Date.now()
   try {
@@ -363,13 +630,10 @@ export async function POST(request: NextRequest) {
       await globalInitializeCache()
     }
 
-    // キャッシュが利用できない場合はエラーを返す
+    // キャッシュが利用できない場合はフォールバック検索を実行
     if (!CACHE_INITIALIZED) {
-      console.error('❌ Cache not available, search service unavailable')
-      return NextResponse.json(
-        { error: 'Search service temporarily unavailable. Please try again later.' },
-        { status: 503 }
-      )
+      console.warn('⚠️ Cache not available, falling back to database search')
+      return await performFallbackSearch(body, startTime)
     }
 
     // 高速フィルタリング（メモリ内検索）

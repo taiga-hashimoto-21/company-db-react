@@ -1,16 +1,16 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { useRouter } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import { Header } from '@/components/ui/Header'
 import { CompanySearch } from '@/components/ui/CompanySearch'
 import { Company, CompanySearchFilters, CompanySearchResponse } from '@/types/company'
-import { useAuth } from '@/contexts/AuthContext'
 import { formatNumber, logPerformance, downloadCSV } from '@/lib/utils'
+import Link from 'next/link'
+import Image from 'next/image'
 
-export default function Home() {
-  const { user, logout } = useAuth()
-  const router = useRouter()
+export default function DemoHome() {
+  const pathname = usePathname()
   const [companies, setCompanies] = useState<Company[]>([])
   const [tableCompanies, setTableCompanies] = useState<Company[]>([])
   const [tablePage, setTablePage] = useState(1)
@@ -30,18 +30,7 @@ export default function Home() {
     visible: false
   })
 
-  const [isLoading, setIsLoading] = useState(true)
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsLoading(false)
-      if (!user) {
-        router.push('/login')
-      }
-    }, 100)
-
-    return () => clearTimeout(timer)
-  }, [user, router])
+  const [isLoading, setIsLoading] = useState(false)
 
   // 件数のみ取得（リアルタイム検索用）
   const getCount = useCallback(async (filters: CompanySearchFilters) => {
@@ -65,7 +54,7 @@ export default function Home() {
       }
 
       const data: CompanySearchResponse = await response.json()
-      setTotalCount(data.pagination.totalCount)
+      setTotalCount(data.pagination.totalCount) // 実際の件数を表示
 
     } catch (err) {
       console.error('Count error:', err)
@@ -75,7 +64,7 @@ export default function Home() {
     }
   }, [])
 
-  // 企業検索（全件取得）
+  // 企業検索（100件制限）
   const searchCompanies = useCallback(async (filters: CompanySearchFilters, countOnly: boolean = false, page: number = 1) => {
     // 件数のみの場合はgetCountを呼び出す
     if (countOnly) {
@@ -95,7 +84,8 @@ export default function Home() {
     try {
       const searchParams = {
         ...filters,
-        page
+        page,
+        limit: 50 // デモ版は50件制限
       }
 
       const response = await fetch('/api/companies/search', {
@@ -112,10 +102,12 @@ export default function Home() {
 
       const data: CompanySearchResponse = await response.json()
 
-      setCompanies(data.companies)
+      // 50件制限を適用
+      const limitedCompanies = data.companies.slice(0, 50)
+      setCompanies(limitedCompanies)
       setCurrentFilters(filters)
-      setTotalCount(data.pagination.totalCount)
-      setSearchResultCount(data.pagination.totalCount)
+      setTotalCount(data.pagination.totalCount) // 実際の件数を表示
+      setSearchResultCount(Math.min(data.pagination.totalCount, 50)) // 表示は50件固定
       setHasSearched(true)
 
     } catch (err) {
@@ -129,7 +121,7 @@ export default function Home() {
     loadTableData(filters, 1)
   }, [getCount])
 
-  // テーブル用データの読み込み（50件ずつ）
+  // テーブル用データの読み込み（50件ずつ、100件制限）
   const loadTableData = useCallback(async (filters: CompanySearchFilters, page: number, append: boolean = false) => {
     if (!append) setTableLoading(true)
 
@@ -154,27 +146,32 @@ export default function Home() {
 
       const data: CompanySearchResponse = await response.json()
 
-      if (append) {
-        setTableCompanies(prev => [...prev, ...data.companies])
-      } else {
-        setTableCompanies(data.companies)
+      let newCompanies = data.companies
+      let currentTotal = append ? tableCompanies.length : 0
+
+      // 50件制限チェック
+      if (currentTotal + newCompanies.length > 50) {
+        newCompanies = newCompanies.slice(0, 50 - currentTotal)
       }
 
-      setHasMoreTableData(data.pagination.hasNextPage)
+      let updatedTableCompanies
+      if (append) {
+        updatedTableCompanies = [...tableCompanies, ...newCompanies].slice(0, 50)
+        setTableCompanies(updatedTableCompanies)
+      } else {
+        updatedTableCompanies = newCompanies.slice(0, 50)
+        setTableCompanies(updatedTableCompanies)
+      }
+
+      // 50件に達したら無限スクロールを停止
+      setHasMoreTableData(updatedTableCompanies.length < 50 && data.pagination.hasNextPage)
 
     } catch (error) {
       console.error('Table data loading error:', error)
     } finally {
       setTableLoading(false)
     }
-  }, [])
-
-  // 初回は自動検索せず、ユーザーの検索操作を待つ
-
-  const handleLogout = () => {
-    logout()
-    router.push('/login')
-  }
+  }, [tableCompanies.length])
 
   const showNotification = useCallback((message: string) => {
     setNotification({ message, visible: true })
@@ -206,7 +203,6 @@ export default function Home() {
   const handleSearch = useCallback((filters: CompanySearchFilters, countOnly?: boolean) => {
     searchCompanies(filters, countOnly, 1)
   }, [searchCompanies])
-
 
   const handleReset = useCallback(() => {
     // リセット時の通知は削除
@@ -268,7 +264,9 @@ export default function Home() {
 
       const data = await response.json()
 
-      const csvData = data.companies.map((company: Company) => {
+      // 50件制限を適用
+      const limitedCompanies = data.companies.slice(0, 50)
+      const csvData = limitedCompanies.map((company: Company) => {
         const representative = company.representative && company.representative.trim() !== ''
           ? company.representative
           : 'ご担当者'
@@ -293,8 +291,8 @@ export default function Home() {
         }
       })
 
-      downloadCSV(csvData, `companies_${new Date().toISOString().slice(0, 10)}.csv`)
-      showNotification('CSVエクスポートが完了しました！')
+      downloadCSV(csvData, `companies_demo_${new Date().toISOString().slice(0, 10)}.csv`)
+      showNotification('CSVエクスポートが完了しました！（デモ版：最大50件）')
 
     } catch (err) {
       console.error('Export error:', err)
@@ -303,18 +301,6 @@ export default function Home() {
       setExporting(false)
     }
   }, [currentFilters, copyFormat, showNotification])
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-[var(--text-secondary)]">Loading...</div>
-      </div>
-    )
-  }
-
-  if (!user) {
-    return null
-  }
 
   return (
     <div className="min-h-screen bg-[var(--bg-secondary)]">
@@ -334,30 +320,85 @@ export default function Home() {
         </div>
       </div>
 
-      <Header
-        title="企業検索"
-        user={{ name: user.name, type: user.type as 'admin' | 'user' }}
-        onLogout={handleLogout}
-      />
+      {/* デモ用ヘッダー */}
+      <header className="bg-white shadow-sm border-b border-[var(--border-color)] sticky top-0 z-50">
+        <div className="w-full" style={{ padding: '0 30px' }}>
+          <div className="flex justify-between items-center h-16">
+            <div className="flex items-center gap-4">
+              <Link href="/">
+                <Image
+                  src="/logo.png"
+                  alt="アプローチロボ"
+                  width={200}
+                  height={40}
+                  className="h-10 w-auto cursor-pointer"
+                />
+              </Link>
+              <div className="bg-orange-100 text-orange-800 rounded-full text-sm font-medium" style={{ padding: '3px 15px' }}>
+                DEMO
+              </div>
+            </div>
+
+            <div className="flex items-center gap-6">
+              <nav className="flex items-center gap-6" style={{ padding: '8px' }}>
+                <Link
+                  href="/demo"
+                  className={`text-sm font-medium text-black transition-colors relative ${
+                    pathname === '/demo'
+                      ? 'after:content-[""] after:absolute after:bottom-[-8px] after:left-0 after:right-0 after:h-0.5 after:bg-[var(--primary)]'
+                      : 'hover:text-[var(--primary)]'
+                  }`}
+                >
+                  企業DB
+                </Link>
+                <Link
+                  href="/demo/prtimes"
+                  className={`text-sm font-medium text-black transition-colors relative ${
+                    pathname === '/demo/prtimes'
+                      ? 'after:content-[""] after:absolute after:bottom-[-8px] after:left-0 after:right-0 after:h-0.5 after:bg-[var(--primary)]'
+                      : 'hover:text-[var(--primary)]'
+                  }`}
+                >
+                  プレスリリース
+                </Link>
+                <Link
+                  href="/login"
+                  className="text-sm font-medium text-black transition-colors hover:text-[var(--primary)]"
+                >
+                  ログイン
+                </Link>
+              </nav>
+
+              <button
+                onClick={() => window.open('https://approach-robo.com/#price', '_blank')}
+                className="text-white text-sm font-medium transition-colors cursor-pointer"
+                style={{
+                  padding: '7px 35px',
+                  borderRadius: '100px',
+                  backgroundColor: '#0f7f85ff',
+                  border: 'none'
+                }}
+                onMouseEnter={(e) => {
+                  const target = e.target as HTMLButtonElement
+                  target.style.backgroundColor = '#0d6b70'
+                }}
+                onMouseLeave={(e) => {
+                  const target = e.target as HTMLButtonElement
+                  target.style.backgroundColor = '#0f7f85ff'
+                }}
+              >
+                有料プランに移行
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
 
       <main style={{ width: '1000px', margin: '0 auto', padding: '32px 24px' }} className="flex flex-col items-center">
 
-        {/* 管理者の場合、管理画面で確認ボタンを一番上に配置 */}
-        {user?.type === 'admin' && (
-          <div className="w-full mb-8 flex justify-center" style={{ marginBottom: '30px' }}>
-            <button
-              onClick={() => router.push('/admin')}
-              className="smarthr-button bg-[var(--primary)] text-white border-transparent hover:bg-[var(--primary-hover)]"
-              style={{ padding: '12px 24px', fontSize: '16px' }}
-            >
-              管理画面で確認
-            </button>
-          </div>
-        )}
-
         <div className="smarthr-card w-full">
           <div className="mb-6">
-            <h1 className="text-xl font-semibold text-[var(--text-primary)]" style={{ marginBottom: '15px' }}>企業データ検索</h1>
+            <h1 className="text-xl font-semibold text-[var(--text-primary)]" style={{ marginBottom: '15px' }}>企業データ検索（デモ版）</h1>
           </div>
           <div>
             <div className="space-y-6">
@@ -385,6 +426,9 @@ export default function Home() {
           <div className="mb-6">
             <h2 style={{ marginBottom: '10px' }} className="text-lg font-semibold text-[var(--text-primary)]">
               検索結果 ({loading ? '検索中...' : hasSearched ? `${formatNumber(searchResultCount)}件` : '-'})
+              {searchResultCount >= 50 && (
+                <span className="text-orange-600 text-sm ml-2">（デモ版：最大50件）</span>
+              )}
             </h2>
           </div>
 

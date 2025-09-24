@@ -351,7 +351,8 @@ async function performFallbackSearch(body: any, startTime: number) {
     page = 1,
     limit = 1000000,
     exportAll = false,
-    tableOnly = false
+    tableOnly = false,
+    countOnly = false
   } = body
 
   const actualLimit = tableOnly ? 50 : (exportAll ? 1000000 : limit)
@@ -449,6 +450,23 @@ async function performFallbackSearch(body: any, startTime: number) {
 
     const countResult = await client.query(countQuery, params)
     const totalCount = parseInt(countResult.rows[0].total)
+
+    // countOnlyの場合は件数のみ返す
+    if (countOnly) {
+      const responseTime = Date.now() - startTime
+      return NextResponse.json({
+        companies: [],
+        pagination: {
+          currentPage: 1,
+          totalPages: 1,
+          totalCount,
+          hasNextPage: false,
+          hasPrevPage: false
+        },
+        _responseTime: responseTime,
+        _cache: 'fallback'
+      })
+    }
 
     // データ取得（重複除去）
     const dataQuery = `
@@ -585,7 +603,8 @@ export async function POST(request: NextRequest) {
       page = 1,
       limit = 1000000,
       exportAll = false,
-      tableOnly = false
+      tableOnly = false,
+      countOnly = false
     } = body
 
     // テーブル専用リクエスト時は50件ずつ、それ以外は制限なし
@@ -725,6 +744,23 @@ export async function POST(request: NextRequest) {
     )
 
     const totalCount = filteredCompanies.length
+
+    // countOnlyの場合は件数のみ返す
+    if (countOnly) {
+      const responseTime = Date.now() - startTime
+      return NextResponse.json({
+        companies: [],
+        pagination: {
+          currentPage: 1,
+          totalPages: 1,
+          totalCount,
+          hasNextPage: false,
+          hasPrevPage: false
+        },
+        _responseTime: responseTime,
+        _cache: 'hit'
+      })
+    }
 
     // ページネーション処理
     const startIndex = exportAll ? 0 : offset

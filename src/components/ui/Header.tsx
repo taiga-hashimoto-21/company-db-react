@@ -94,7 +94,7 @@ export function Header({ title, user, onLogout, children }: HeaderProps) {
         <div className="flex justify-between items-center h-16">
           {/* 左側: ロゴ */}
           <div className="flex items-center">
-            <Link href="/prtimes">
+            <Link href="/">
               <Image
                 src="/logo.png"
                 alt="アプローチロボ"
@@ -108,18 +108,37 @@ export function Header({ title, user, onLogout, children }: HeaderProps) {
           {/* 右側: ナビゲーション */}
           <div className="flex items-center gap-6">
             <nav className="flex items-center gap-6" style={{ padding: '8px' }}>
-              <Link 
-                href="/prtimes"
+              <Link
+                href="/"
                 className={`text-sm font-medium text-black transition-colors relative ${
-                  pathname === '/prtimes' 
-                    ? 'after:content-[""] after:absolute after:bottom-[-8px] after:left-0 after:right-0 after:h-0.5 after:bg-[var(--primary)]' 
+                  pathname === '/'
+                    ? 'after:content-[""] after:absolute after:bottom-[-8px] after:left-0 after:right-0 after:h-0.5 after:bg-[var(--primary)]'
                     : 'hover:text-[var(--primary)]'
                 }`}
               >
-                PR TIMES
+                全体DB
+              </Link>
+              <Link
+                href="/prtimes"
+                className={`text-sm font-medium text-black transition-colors relative ${
+                  pathname === '/prtimes'
+                    ? 'after:content-[""] after:absolute after:bottom-[-8px] after:left-0 after:right-0 after:h-0.5 after:bg-[var(--primary)]'
+                    : 'hover:text-[var(--primary)]'
+                }`}
+              >
+                プレスリリース
               </Link>
             </nav>
-            
+
+            {/* ログアウトボタン */}
+            {onLogout && (
+              <button
+                onClick={onLogout}
+                className="px-4 py-2 text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--primary)] transition-colors"
+              >
+                ログアウト
+              </button>
+            )}
           </div>
         </div>
       </div>

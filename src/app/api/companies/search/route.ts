@@ -1,290 +1,186 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { CorporateSearchResponse, Corporate } from '@/types/corporate'
-import { searchCompanies, getCompanyStats } from '@/lib/database'
+import { NextResponse } from 'next/server'
+import { Pool } from 'pg'
 
-// Redis風キャッシュ（本格運用時はRedisに置き換え）
-const CACHE_TTL = 300 // 5分間キャッシュ
-const cache = new Map<string, { data: CorporateSearchResponse; timestamp: number }>()
+const pool = new Pool({
+  user: process.env.POSTGRES_USER,
+  host: process.env.POSTGRES_HOST,
+  database: process.env.POSTGRES_DB,
+  password: process.env.POSTGRES_PASSWORD,
+  port: parseInt(process.env.POSTGRES_PORT || '5432'),
+})
 
-// フォールバック用デフォルトデータ（PostgreSQL接続失敗時）
-const getDefaultCompanies = (): Corporate[] => {
-  return [
-    {
-      id: 1,
-      companyName: '株式会社テックイノベーション',
-      establishedDate: '2015-04-15',
-      postalCode: '100-0001',
-      address: '東京都千代田区大手町1-1-1',
-      industry: 'IT・通信',
-      website: 'https://tech-innovation.co.jp'
-    },
-    {
-      id: 2,
-      companyName: '大阪製造株式会社',
-      establishedDate: '1985-09-20',
-      postalCode: '530-0001',
-      address: '大阪府大阪市北区梅田3-3-3',
-      industry: '製造業',
-      website: 'https://osaka-seizo.co.jp'
-    },
-    {
-      id: 3,
-      companyName: 'グローバル商事株式会社',
-      establishedDate: '1995-12-10',
-      postalCode: '220-0011',
-      address: '神奈川県横浜市西区みなとみらい2-2-2',
-      industry: '商社・流通',
-      website: 'https://global-shoji.com'
-    },
-    {
-      id: 4,
-      companyName: '九州建設株式会社',
-      establishedDate: '1978-03-05',
-      postalCode: '812-0011',
-      address: '福岡県福岡市博多区博多駅前1-1-1',
-      industry: '不動産・建設'
-    },
-    {
-      id: 5,
-      companyName: '北海道食品株式会社',
-      establishedDate: '2010-11-22',
-      postalCode: '060-0001',
-      address: '北海道札幌市中央区大通西5-5-5',
-      industry: '食品・飲料',
-      website: 'https://hokkaido-foods.jp'
-    },
-    {
-      id: 6,
-      companyName: '東京金融株式会社',
-      establishedDate: '2000-03-15',
-      postalCode: '104-0061',
-      address: '東京都中央区銀座1-1-1',
-      industry: '金融・保険',
-      website: 'https://tokyo-finance.co.jp'
-    },
-    {
-      id: 7,
-      companyName: '関西医療サービス株式会社',
-      establishedDate: '2005-07-20',
-      postalCode: '550-0001',
-      address: '大阪府大阪市西区土佐堀1-1-1',
-      industry: '医療・介護'
-    },
-    {
-      id: 8,
-      companyName: '全国運輸株式会社',
-      establishedDate: '1990-12-01',
-      postalCode: '460-0008',
-      address: '愛知県名古屋市中区栄2-2-2',
-      industry: '運輸・物流'
-    }
-  ]
-}
-
-export async function POST(request: NextRequest) {
-  const startTime = Date.now()
-  
+export async function POST(request: Request) {
   try {
-    const { 
-      industries, 
-      prefectures,
-      capitalMin,
-      capitalMax,
+    const body = await request.json()
+    const {
+      companyName = '',
+      prefecture = [],
+      industry = [],
       employeesMin,
       employeesMax,
+      capitalMin,
+      capitalMax,
       establishedYearMin,
       establishedYearMax,
-      page = 1, 
-      limit = 100,
-      companyName,
-      establishedDateStart,
-      establishedDateEnd
-    } = await request.json()
+      page = 1,
+      tableOnly = false,
+      exportAll = false,
+      countOnly = false
+    } = body
 
-    // バリデーション（1200万社対応）
-    if (limit > 1000) {
-      return NextResponse.json(
-        { error: 'Limit cannot exceed 1000 for performance reasons' },
-        { status: 400 }
-      )
+    const limit = exportAll ? 100000 : tableOnly ? 50 : 100000
+    const offset = (page - 1) * limit
+
+    // クエリ条件を構築
+    const conditions = []
+    const params = []
+    let paramIndex = 1
+
+    // 会社名検索
+    if (companyName && companyName.trim()) {
+      conditions.push(`company_name ILIKE $${paramIndex}`)
+      params.push(`%${companyName.trim()}%`)
+      paramIndex++
     }
 
-    // キャッシュキー生成（新しい検索条件含む）
-    const cacheKey = JSON.stringify({ 
-      industries, prefectures, capitalMin, capitalMax, employeesMin, employeesMax,
-      establishedYearMin, establishedYearMax, page, limit, companyName, 
-      establishedDateStart, establishedDateEnd 
-    })
-    
-    // キャッシュチェック（高速レスポンス）
-    const cached = cache.get(cacheKey)
-    if (cached && Date.now() - cached.timestamp < CACHE_TTL * 1000) {
+    // 都道府県フィルター
+    if (prefecture && prefecture.length > 0) {
+      conditions.push(`prefecture = ANY($${paramIndex})`)
+      params.push(prefecture)
+      paramIndex++
+    }
+
+    // 業界フィルター
+    if (industry && industry.length > 0) {
+      conditions.push(`industry = ANY($${paramIndex})`)
+      params.push(industry)
+      paramIndex++
+    }
+
+    // 従業員数範囲
+    if (employeesMin !== undefined) {
+      conditions.push(`employee_count >= $${paramIndex}`)
+      params.push(employeesMin)
+      paramIndex++
+    }
+    if (employeesMax !== undefined) {
+      conditions.push(`employee_count <= $${paramIndex}`)
+      params.push(employeesMax)
+      paramIndex++
+    }
+
+    // 資本金範囲（万円単位で受け取って実際は円単位で検索）
+    if (capitalMin !== undefined) {
+      conditions.push(`capital_amount >= $${paramIndex}`)
+      params.push(capitalMin * 10000) // 万円を円に変換
+      paramIndex++
+    }
+    if (capitalMax !== undefined) {
+      conditions.push(`capital_amount <= $${paramIndex}`)
+      params.push(capitalMax * 10000) // 万円を円に変換
+      paramIndex++
+    }
+
+    // 設立年範囲
+    if (establishedYearMin !== undefined) {
+      conditions.push(`EXTRACT(YEAR FROM established_date) >= $${paramIndex}`)
+      params.push(establishedYearMin)
+      paramIndex++
+    }
+    if (establishedYearMax !== undefined) {
+      conditions.push(`EXTRACT(YEAR FROM established_date) <= $${paramIndex}`)
+      params.push(establishedYearMax)
+      paramIndex++
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+
+    // カウントクエリ
+    const countQuery = `
+      SELECT COUNT(*) as total
+      FROM companies
+      ${whereClause}
+    `
+
+    const countParams = params.slice() // 現在のパラメータをコピー
+
+    // countOnlyの場合は件数のみ返す
+    if (countOnly) {
+      const countResult = await pool.query(countQuery, countParams)
+      const totalCount = parseInt(countResult.rows[0].total)
+
       return NextResponse.json({
-        ...cached.data,
-        _cache: 'hit',
-        _responseTime: Date.now() - startTime
+        companies: [],
+        pagination: {
+          currentPage: 1,
+          totalPages: 1,
+          totalCount,
+          hasNextPage: false,
+          hasPrevPage: false
+        },
+        _responseTime: Date.now() - Date.now(),
+        _cache: 'miss'
       })
     }
 
-    // PostgreSQL高速検索（フォールバック対応）
-    let companies: Corporate[] = []
-    let totalCount = 0
-    let dataSource = 'postgresql'
+    // メインクエリ
+    const query = `
+      SELECT
+        id,
+        company_name as "companyName",
+        website as "companyWebsite",
+        address,
+        prefecture,
+        industry,
+        employee_count as "employees",
+        capital_amount as "capital",
+        EXTRACT(YEAR FROM established_date) as "establishedYear",
+        established_date as "establishedDate",
+        created_at as "createdAt",
+        updated_at as "updatedAt"
+      FROM companies
+      ${whereClause}
+      ORDER BY company_name ASC
+      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+    `
 
-    try {
-      const result = await searchCompanies({
-        industries,
-        prefectures,
-        capitalMin,
-        capitalMax,
-        employeesMin,
-        employeesMax,
-        establishedYearMin,
-        establishedYearMax,
-        page,
-        limit,
-        companyName,
-        establishedDateStart,
-        establishedDateEnd
-      })
-      companies = result.companies
-      totalCount = result.totalCount
-    } catch (dbError) {
-      console.warn('PostgreSQL接続失敗、フォールバックモードに切り替え:', dbError)
-      
-      // フォールバック：デフォルトデータを使用
-      const allCompanies = getDefaultCompanies()
-      let filteredCompanies = allCompanies
+    params.push(limit, offset)
 
-      // 業種フィルタリング（インメモリ）
-      if (industries && industries.length > 0) {
-        filteredCompanies = allCompanies.filter(company => 
-          industries.includes(company.industry)
-        )
-      }
+    const [companiesResult, countResult] = await Promise.all([
+      pool.query(query, params),
+      pool.query(countQuery, countParams)
+    ])
 
-      // 企業名フィルタリング（インメモリ）
-      if (companyName) {
-        filteredCompanies = filteredCompanies.filter(company =>
-          company.companyName.toLowerCase().includes(companyName.toLowerCase())
-        )
-      }
+    const companies = companiesResult.rows.map(row => ({
+      ...row,
+      representative: null, // PRTimesとは異なり代表者情報は持たない
+      capital: row.capital ? Math.floor(row.capital / 10000) : null // 円を万円に変換
+    }))
 
-      // ページネーション（インメモリ）
-      const offset = (page - 1) * limit
-      companies = filteredCompanies.slice(offset, offset + limit)
-      totalCount = filteredCompanies.length
-      dataSource = 'fallback'
-    }
-    
+    const totalCount = parseInt(countResult.rows[0].total)
     const totalPages = Math.ceil(totalCount / limit)
-    
-    const response: CorporateSearchResponse = {
+
+    const pagination = {
+      currentPage: page,
+      totalPages,
+      totalCount,
+      hasNextPage: page < totalPages,
+      hasPrevPage: page > 1
+    }
+
+    return NextResponse.json({
       companies,
-      pagination: {
-        currentPage: page,
-        totalPages,
-        totalCount,
-        hasNextPage: page < totalPages,
-        hasPrevPage: page > 1
-      }
-    }
-
-    // キャッシュに保存（メモリ効率化）
-    cache.set(cacheKey, { data: response, timestamp: Date.now() })
-    
-    // キャッシュサイズ管理（メモリリーク防止）
-    if (cache.size > 1000) {
-      const oldestKey = cache.keys().next().value
-      cache.delete(oldestKey)
-    }
-    
-    const responseTime = Date.now() - startTime
-    
-    return NextResponse.json({
-      ...response,
-      _cache: 'miss',
-      _responseTime: responseTime,
-      _queryInfo: {
-        totalCount,
-        dataSource,
-        indexesUsed: dataSource === 'postgresql' ? 
-          ['idx_companies_industry', 'idx_companies_company_name'] : 
-          ['in-memory-filter'],
-        filters: { industries, prefectures, capitalMin, capitalMax, employeesMin, employeesMax, establishedYearMin, establishedYearMax, companyName, establishedDateStart, establishedDateEnd }
-      }
+      pagination,
+      _responseTime: Date.now() - Date.now(), // 簡易的な応答時間
+      _cache: 'miss' // 簡易的なキャッシュ状態
     })
 
   } catch (error) {
-    console.error('PostgreSQL Search API Error:', error)
+    console.error('Database error:', error)
     return NextResponse.json(
-      { 
-        error: 'データベース検索中にエラーが発生しました',
-        _responseTime: Date.now() - startTime,
-        _errorType: error instanceof Error ? error.name : 'Unknown'
-      },
+      { error: 'Internal server error' },
       { status: 500 }
     )
   }
 }
 
-// 統計情報API（1200万社対応・フォールバック対応）
-export async function GET() {
-  const startTime = Date.now()
-  
-  try {
-    let stats
-    let dataSource = 'postgresql'
-    
-    try {
-      stats = await getCompanyStats()
-    } catch (dbError) {
-      console.warn('PostgreSQL統計取得失敗、フォールバックモード:', dbError)
-      
-      // フォールバック：デフォルトデータから統計生成
-      const defaultCompanies = getDefaultCompanies()
-      const industryBreakdown = defaultCompanies.reduce((acc: any[], company) => {
-        const existing = acc.find(item => item.industry === company.industry)
-        if (existing) {
-          existing.company_count += 1
-        } else {
-          acc.push({
-            industry: company.industry,
-            company_count: 1
-          })
-        }
-        return acc
-      }, [])
-      
-      stats = {
-        totalCompanies: defaultCompanies.length,
-        industryBreakdown
-      }
-      dataSource = 'fallback'
-    }
-    
-    const responseTime = Date.now() - startTime
-    
-    return NextResponse.json({
-      ...stats,
-      _responseTime: responseTime,
-      _dataSource: dataSource
-    })
-
-  } catch (error) {
-    console.error('Stats API Error:', error)
-    return NextResponse.json(
-      { 
-        error: '統計情報の取得に失敗しました',
-        _responseTime: Date.now() - startTime
-      },
-      { status: 500 }
-    )
-  }
-}
-
-// キャッシュクリア（管理者用）
-export async function DELETE() {
-  cache.clear()
-  return NextResponse.json({ message: 'Cache cleared successfully' })
-}

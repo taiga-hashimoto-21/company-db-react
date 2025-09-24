@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
+import { usePathname } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { Header } from '@/components/ui/Header'
@@ -12,6 +13,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 
 export default function DemoPRTimesPage() {
+  const pathname = usePathname()
   const [companies, setCompanies] = useState<PRTimesCompany[]>([])
   const [tableCompanies, setTableCompanies] = useState<PRTimesCompany[]>([])
   const [tablePage, setTablePage] = useState(1)
@@ -30,29 +32,23 @@ export default function DemoPRTimesPage() {
   const [exporting, setExporting] = useState(false)
   const [responseTime, setResponseTime] = useState<number>(0)
   const [cacheStatus, setCacheStatus] = useState<'hit' | 'miss' | null>(null)
-  const [copyFormat, setCopyFormat] = useState<'url' | 'url_name' | 'url_name_rep'>('url')
+  const [copyFormat, setCopyFormat] = useState<'url' | 'url_name' | 'url_name_rep' | 'url_name_rep_press'>('url')
+  const [totalCount, setTotalCount] = useState<number>(0)
+  const [countLoading, setCountLoading] = useState(false)
+  const [searchResultCount, setSearchResultCount] = useState<number>(0)
+  const [hasSearched, setHasSearched] = useState(false)
   const [notification, setNotification] = useState<{message: string, visible: boolean}>({
     message: '',
     visible: false
   })
 
-  // 送信先リストデータ用の検索（100件制限）
-  const searchCompanies = useCallback(async (filters: PRTimesSearchFilters, page: number = 1) => {
-    const startTime = Date.now()
-    setLoading(true)
-    setError('')
-    setResponseTime(0)
-    setCacheStatus(null)
-    setCopyFormat('url')
-    setTableCompanies([])
-    setTablePage(1)
-    setHasMoreTableData(true)
-    
+  // 件数のみ取得（リアルタイム検索用）
+  const getCount = useCallback(async (filters: PRTimesSearchFilters) => {
+    setCountLoading(true)
     try {
       const searchParams = {
         ...filters,
-        page: 1,
-        limit: 100 // デモ版は100件制限
+        countOnly: true
       }
 
       const response = await fetch('/api/prtimes/search', {
@@ -62,29 +58,74 @@ export default function DemoPRTimesPage() {
         },
         body: JSON.stringify(searchParams)
       })
-      
+
+      if (!response.ok) {
+        throw new Error(`件数取得に失敗しました (${response.status})`)
+      }
+
+      const data: PRTimesSearchResponse = await response.json()
+      setTotalCount(data.pagination.totalCount) // 実際の件数を表示
+
+    } catch (err) {
+      console.error('Count error:', err)
+      setTotalCount(0)
+    } finally {
+      setCountLoading(false)
+    }
+  }, [])
+
+  // 企業検索（100件制限）
+  const searchCompanies = useCallback(async (filters: PRTimesSearchFilters, countOnly: boolean = false, page: number = 1) => {
+    // 件数のみの場合はgetCountを呼び出す
+    if (countOnly) {
+      getCount(filters)
+      return
+    }
+
+    const startTime = Date.now()
+    setLoading(true)
+    setError('')
+    setResponseTime(0)
+    setCacheStatus(null)
+    setCopyFormat('url')
+    setTableCompanies([])
+    setTablePage(1)
+    setHasMoreTableData(true)
+    setCompanies([]) // textareaの内容をリセット
+
+    try {
+      const searchParams = {
+        ...filters,
+        page,
+        limit: 50 // デモ版は50件制限
+      }
+
+      const response = await fetch('/api/prtimes/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(searchParams)
+      })
+
       if (!response.ok) {
         throw new Error(`検索に失敗しました (${response.status})`)
       }
-      
+
       const data: PRTimesSearchResponse & {
         _responseTime?: number
         _cache?: 'hit' | 'miss'
         _queryInfo?: any
       } = await response.json()
-      
-      // 100件制限を適用
-      const limitedCompanies = data.companies.slice(0, 100)
+
+      // 50件制限を適用
+      const limitedCompanies = data.companies.slice(0, 50)
       setCompanies(limitedCompanies)
-      setPagination({
-        currentPage: 1,
-        totalPages: 1,
-        totalCount: Math.min(limitedCompanies.length, 100),
-        hasNextPage: false,
-        hasPrevPage: false
-      })
       setCurrentFilters(filters)
-      
+      setTotalCount(data.pagination.totalCount) // 実際の件数を表示
+      setSearchResultCount(Math.min(data.pagination.totalCount, 50)) // 表示は50件固定
+      setHasSearched(true)
+
       // パフォーマンス情報の表示
       if (data._responseTime) {
         setResponseTime(data._responseTime)
@@ -101,7 +142,7 @@ export default function DemoPRTimesPage() {
           }
         )
       }
-      
+
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : '検索中にエラーが発生しました'
       setError(errorMessage)
@@ -116,10 +157,10 @@ export default function DemoPRTimesPage() {
     } finally {
       setLoading(false)
     }
-    
+
     // 初回テーブルデータ読み込み
     loadTableData(filters, 1)
-  }, [])
+  }, [getCount])
 
   // テーブル用データの読み込み（50件ずつ、100件制限）
   const loadTableData = useCallback(async (filters: PRTimesSearchFilters, page: number, append: boolean = false) => {
@@ -149,22 +190,22 @@ export default function DemoPRTimesPage() {
       let newCompanies = data.companies
       let currentTotal = append ? tableCompanies.length : 0
       
-      // 100件制限チェック
-      if (currentTotal + newCompanies.length > 100) {
-        newCompanies = newCompanies.slice(0, 100 - currentTotal)
+      // 50件制限チェック
+      if (currentTotal + newCompanies.length > 50) {
+        newCompanies = newCompanies.slice(0, 50 - currentTotal)
       }
-      
+
       let updatedTableCompanies
       if (append) {
-        updatedTableCompanies = [...tableCompanies, ...newCompanies].slice(0, 100)
+        updatedTableCompanies = [...tableCompanies, ...newCompanies].slice(0, 50)
         setTableCompanies(updatedTableCompanies)
       } else {
-        updatedTableCompanies = newCompanies.slice(0, 100)
+        updatedTableCompanies = newCompanies.slice(0, 50)
         setTableCompanies(updatedTableCompanies)
       }
-      
-      // 100件に達したら無限スクロールを停止
-      setHasMoreTableData(updatedTableCompanies.length < 100 && data.pagination.hasNextPage)
+
+      // 50件に達したら無限スクロールを停止
+      setHasMoreTableData(updatedTableCompanies.length < 50 && data.pagination.hasNextPage)
       
     } catch (error) {
       console.error('Table data loading error:', error)
@@ -173,72 +214,37 @@ export default function DemoPRTimesPage() {
     }
   }, [tableCompanies.length])
 
-  // テーブル表示用データの生成（企業単位でユニーク化、最新のプレスリリースのみ）
+  // テーブル表示用データの生成（バックエンドで既にドメインベース重複除去済み）
   const displayCompanies = useMemo(() => {
-    const uniqueCompaniesMap = new Map()
-    
-    companies.forEach(company => {
-      const representative = company.representative && company.representative.trim() !== '' && company.representative.trim() !== '-'
-        ? company.representative 
-        : 'ご担当者'
-      
-      const key = `${company.companyWebsite}_${company.companyName}_${representative}`
-      
-      if (!uniqueCompaniesMap.has(key)) {
-        uniqueCompaniesMap.set(key, [])
-      }
-      uniqueCompaniesMap.get(key).push(company)
-    })
-    
-    // 各企業グループから最新のプレスリリースを選択し、件数を付加
-    return Array.from(uniqueCompaniesMap.values()).map(companyGroup => {
-      // 配信日で降順ソートして最新を取得
-      const sortedCompanies = companyGroup.sort((a, b) => 
-        new Date(b.deliveryDate).getTime() - new Date(a.deliveryDate).getTime()
-      )
-      const latestCompany = sortedCompanies[0]
-      
-      return {
-        ...latestCompany,
-        pressReleaseCount: companyGroup.length
-      }
-    })
+    // バックエンドで既にドメインベース重複除去済みなので、そのまま使用
+    return companies.map(company => ({
+      ...company,
+      pressReleaseCount: 1 // バックエンドで各ドメインから1件選択済み
+    }))
   }, [companies])
 
-  // コピー用データの生成（重複企業を除外）
+  // コピー用データの生成（displayCompaniesは既に重複除去済み）
   const copyData = useMemo(() => {
-    // 会社名・ホームページURL・代表者名でユニーク化
-    const uniqueCompanies = displayCompanies.reduce((acc, company) => {
+    return displayCompanies.map(company => {
       const representative = company.representative && company.representative.trim() !== '' && company.representative.trim() !== '-'
-        ? company.representative 
+        ? company.representative
         : 'ご担当者'
-      
-      const key = `${company.companyWebsite}_${company.companyName}_${representative}`
-      
-      if (!acc.has(key)) {
-        acc.set(key, { ...company, processedRepresentative: representative })
-      }
-      
-      return acc
-    }, new Map())
-    
-    return Array.from(uniqueCompanies.values()).map(company => {
+
       switch (copyFormat) {
         case 'url':
           return company.companyWebsite
         case 'url_name':
           return `${company.companyWebsite},${company.companyName}`
         case 'url_name_rep':
+          return `${company.companyWebsite},${company.companyName},${representative}`
+        case 'url_name_rep_press':
         default:
-          return `${company.companyWebsite},${company.companyName},${company.processedRepresentative}`
+          return `${company.companyWebsite},${company.companyName},${representative},${company.pressReleaseUrl || ''}`
       }
     }).join('\n')
   }, [displayCompanies, copyFormat])
 
-  useEffect(() => {
-    const defaultFilters: PRTimesSearchFilters = {}
-    searchCompanies(defaultFilters)
-  }, [searchCompanies])
+  // 初回は自動検索せず、ユーザーの検索操作を待つ
 
   const showNotification = useCallback((message: string) => {
     setNotification({ message, visible: true })
@@ -269,8 +275,8 @@ export default function DemoPRTimesPage() {
     }
   }, [tableLoading, hasMoreTableData, tablePage, currentFilters, loadTableData])
 
-  const handleSearch = useCallback((filters: PRTimesSearchFilters) => {
-    searchCompanies(filters, 1)
+  const handleSearch = useCallback((filters: PRTimesSearchFilters, countOnly?: boolean) => {
+    searchCompanies(filters, countOnly, 1)
   }, [searchCompanies])
 
   const handleCopy = useCallback(() => {
@@ -283,8 +289,8 @@ export default function DemoPRTimesPage() {
   }, [copyData, showNotification])
 
   const handleReset = useCallback(() => {
-    showNotification('検索条件をリセットしました！')
-  }, [showNotification])
+    // リセット時の通知は削除
+  }, [])
 
   const handleExport = useCallback(async () => {
     setExporting(true)
@@ -308,19 +314,13 @@ export default function DemoPRTimesPage() {
       
       const data = await response.json()
       
-      // フィルタリングされた企業のみを使用（ホームページURLがある企業のみ）、100件制限
-      const filteredCompanies = data.companies
-        .filter((company: PRTimesCompany) => 
-          company.companyWebsite && company.companyWebsite.trim() !== ''
-        )
-        .slice(0, 100) // デモ版は100件制限
-      
-      // ラジオボタンの選択に応じてCSVデータを生成
-      const csvData = filteredCompanies.map((company: PRTimesCompany) => {
-        const representative = company.representative && company.representative.trim() !== '' 
-          ? company.representative 
+      // バックエンドで既にドメインベース重複除去済み、50件制限を適用
+      const limitedCompanies = data.companies.slice(0, 50)
+      const csvData = limitedCompanies.map((company: PRTimesCompany) => {
+        const representative = company.representative && company.representative.trim() !== ''
+          ? company.representative
           : 'ご担当者'
-          
+
         switch (copyFormat) {
           case 'url':
             return {
@@ -332,17 +332,24 @@ export default function DemoPRTimesPage() {
               '会社名': company.companyName
             }
           case 'url_name_rep':
-          default:
             return {
               'ホームページURL': company.companyWebsite,
               '会社名': company.companyName,
               '代表者名': representative
             }
+          case 'url_name_rep_press':
+          default:
+            return {
+              'ホームページURL': company.companyWebsite,
+              '会社名': company.companyName,
+              '代表者名': representative,
+              'プレスリリースURL': company.pressReleaseUrl || ''
+            }
         }
       })
       
       downloadCSV(csvData, `prtimes_demo_${new Date().toISOString().slice(0, 10)}.csv`)
-      showNotification('CSVエクスポートが完了しました！（デモ版：最大100件）')
+      showNotification('CSVエクスポートが完了しました！（デモ版：最大50件）')
       
     } catch (err) {
       console.error('Export error:', err)
@@ -391,7 +398,27 @@ export default function DemoPRTimesPage() {
             
             <div className="flex items-center gap-6">
               <nav className="flex items-center gap-6" style={{ padding: '8px' }}>
-                <Link 
+                <Link
+                  href="/demo"
+                  className={`text-sm font-medium text-black transition-colors relative ${
+                    pathname === '/demo'
+                      ? 'after:content-[""] after:absolute after:bottom-[-8px] after:left-0 after:right-0 after:h-0.5 after:bg-[var(--primary)]'
+                      : 'hover:text-[var(--primary)]'
+                  }`}
+                >
+                  企業DB
+                </Link>
+                <Link
+                  href="/demo/prtimes"
+                  className={`text-sm font-medium text-black transition-colors relative ${
+                    pathname === '/demo/prtimes'
+                      ? 'after:content-[""] after:absolute after:bottom-[-8px] after:left-0 after:right-0 after:h-0.5 after:bg-[var(--primary)]'
+                      : 'hover:text-[var(--primary)]'
+                  }`}
+                >
+                  プレスリリース
+                </Link>
+                <Link
                   href="/login"
                   className="text-sm font-medium text-black transition-colors hover:text-[var(--primary)]"
                 >
@@ -408,8 +435,14 @@ export default function DemoPRTimesPage() {
                   backgroundColor: '#0f7f85ff',
                   border: 'none'
                 }}
-                onMouseEnter={(e) => e.target.style.backgroundColor = '#0d6b70'}
-                onMouseLeave={(e) => e.target.style.backgroundColor = '#0f7f85ff'}
+                onMouseEnter={(e) => {
+                  const target = e.target as HTMLButtonElement
+                  target.style.backgroundColor = '#0d6b70'
+                }}
+                onMouseLeave={(e) => {
+                  const target = e.target as HTMLButtonElement
+                  target.style.backgroundColor = '#0f7f85ff'
+                }}
               >
                 有料プランに移行
               </button>
@@ -426,11 +459,13 @@ export default function DemoPRTimesPage() {
           </div>
           <div>
             <div className="space-y-6">
-              <PRTimesSearch 
+              <PRTimesSearch
                 onSearch={handleSearch}
                 onReset={handleReset}
                 loading={loading}
                 realtime={true}
+                totalCount={totalCount}
+                countLoading={countLoading}
               />
             </div>
           </div>
@@ -447,9 +482,9 @@ export default function DemoPRTimesPage() {
         <div className="smarthr-card w-full">
           <div className="mb-6">
             <h2 style={{ marginBottom: '10px' }} className="text-lg font-semibold text-[var(--text-primary)]">
-              検索結果 ({loading ? '検索中...' : `${formatNumber(displayCompanies.length)}件`})
-              {displayCompanies.length >= 100 && (
-                <span className="text-orange-600 text-sm ml-2">（デモ版：最大100件）</span>
+              検索結果 ({loading ? '検索中...' : hasSearched ? `${formatNumber(searchResultCount)}件` : '-'})
+              {searchResultCount >= 50 && (
+                <span className="text-orange-600 text-sm ml-2">（デモ版：最大50件）</span>
               )}
             </h2>
           </div>
@@ -467,7 +502,7 @@ export default function DemoPRTimesPage() {
                     name="copyFormat"
                     value="url"
                     checked={copyFormat === 'url'}
-                    onChange={(e) => setCopyFormat(e.target.value as 'url' | 'url_name' | 'url_name_rep')}
+                    onChange={(e) => setCopyFormat(e.target.value as 'url' | 'url_name' | 'url_name_rep' | 'url_name_rep_press')}
                     className="mr-2"
                   />
                   <span className="text-sm">ホームページURLのみ</span>
@@ -478,7 +513,7 @@ export default function DemoPRTimesPage() {
                     name="copyFormat"
                     value="url_name"
                     checked={copyFormat === 'url_name'}
-                    onChange={(e) => setCopyFormat(e.target.value as 'url' | 'url_name' | 'url_name_rep')}
+                    onChange={(e) => setCopyFormat(e.target.value as 'url' | 'url_name' | 'url_name_rep' | 'url_name_rep_press')}
                     className="mr-2"
                   />
                   <span className="text-sm">ホームページURLと会社名</span>
@@ -489,10 +524,21 @@ export default function DemoPRTimesPage() {
                     name="copyFormat"
                     value="url_name_rep"
                     checked={copyFormat === 'url_name_rep'}
-                    onChange={(e) => setCopyFormat(e.target.value as 'url' | 'url_name' | 'url_name_rep')}
+                    onChange={(e) => setCopyFormat(e.target.value as 'url' | 'url_name' | 'url_name_rep' | 'url_name_rep_press')}
                     className="mr-2"
                   />
                   <span className="text-sm">ホームページURLと会社名と代表者名</span>
+                </label>
+                <label className="flex items-center">
+                  <input
+                    type="radio"
+                    name="copyFormat"
+                    value="url_name_rep_press"
+                    checked={copyFormat === 'url_name_rep_press'}
+                    onChange={(e) => setCopyFormat(e.target.value as 'url' | 'url_name' | 'url_name_rep' | 'url_name_rep_press')}
+                    className="mr-2"
+                  />
+                  <span className="text-sm">ホームページURLと会社名と代表者名とプレスリリースURL</span>
                 </label>
               </div>
             </div>
@@ -520,101 +566,6 @@ export default function DemoPRTimesPage() {
               >
                 {exporting ? 'エクスポート中...' : 'CSVエクスポート'}
               </button>
-            </div>
-          </div>
-          
-          <div>
-            <div className="overflow-x-auto">
-              <table className="smarthr-table w-full">
-                <thead>
-                  <tr>
-                    <th style={{ width: '25%' }}>ホームページURL</th>
-                    <th style={{ width: '25%' }}>会社名</th>
-                    <th style={{ width: '25%' }}>代表者名</th>
-                    <th style={{ width: '25%' }}>PR TIMESリンク</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading ? (
-                    Array.from({ length: 10 }).map((_, index) => (
-                      <tr key={`loading-${index}`}>
-                        <td colSpan={4} className="text-center">
-                          <div className="animate-pulse bg-[var(--bg-light)] h-6 rounded"></div>
-                        </td>
-                      </tr>
-                    ))
-                  ) : tableCompanies.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="py-8 text-center text-[var(--text-secondary)]">
-                        検索条件に一致する企業が見つかりませんでした
-                      </td>
-                    </tr>
-                  ) : (
-                    tableCompanies.slice(0, 100).map((company, index) => (
-                      <tr key={company.id}>
-                        <td>
-                          {company.companyWebsite ? (
-                            <a 
-                              href={company.companyWebsite} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              className="text-[var(--primary)] hover:text-[var(--primary-hover)] hover:underline break-all transition-colors"
-                            >
-                              {company.companyWebsite}
-                            </a>
-                          ) : (
-                            <span className="text-[var(--text-light)]">-</span>
-                          )}
-                        </td>
-                        <td>
-                          <div className="font-medium text-[var(--text-primary)]">
-                            {company.companyName}
-                          </div>
-                        </td>
-                        <td>
-                          <span className="text-sm">
-                            {company.representative || '-'}
-                          </span>
-                        </td>
-                        <td>
-                          {company.pressReleaseUrl ? (
-                            <a 
-                              href={company.pressReleaseUrl} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              className="text-[var(--primary)] hover:text-[var(--primary-hover)] hover:underline break-all transition-colors"
-                            >
-                              プレスリリースを見る
-                            </a>
-                          ) : (
-                            <span className="text-[var(--text-light)]">-</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-              
-              {/* 無限スクロール用のローディング要素 */}
-              {hasMoreTableData && (
-                <div ref={loadMoreRef} className="py-4 text-center text-[var(--text-secondary)]">
-                  {tableLoading ? (
-                    <div className="animate-pulse">さらにデータを読み込み中...</div>
-                  ) : (
-                    <div>スクロールしてさらに読み込む</div>
-                  )}
-                </div>
-              )}
-              
-              {!hasMoreTableData && tableCompanies.length > 0 && (
-                <div className="py-4 text-center text-[var(--text-secondary)]">
-                  {tableCompanies.length >= 100 ? 
-                    'デモ版では最大100件まで表示されます' : 
-                    '全てのデータを表示しました'
-                  }
-                </div>
-              )}
             </div>
           </div>
         </div>

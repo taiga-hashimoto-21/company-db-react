@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Pool } from 'pg'
-import bcrypt from 'bcrypt'
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -9,11 +8,11 @@ const pool = new Pool({
 
 export async function POST(request: NextRequest) {
   try {
-    const { username, password } = await request.json()
+    const { username } = await request.json()
 
-    if (!username || !password) {
+    if (!username) {
       return NextResponse.json(
-        { error: 'Username and password are required' },
+        { error: 'Username is required' },
         { status: 400 }
       )
     }
@@ -21,12 +20,10 @@ export async function POST(request: NextRequest) {
     const client = await pool.connect()
     
     try {
-      // ユーザー情報を取得
+      // ユーザー情報を取得（パスワード確認はスキップ）
       const userQuery = `
-        SELECT u.id, u.username, u.name, u.company_name, u.email, u.phone_number, u.type, u.is_active,
-               up.password_hash
+        SELECT u.id, u.username, u.name, u.company_name, u.email, u.phone_number, u.type, u.is_active
         FROM users u
-        JOIN user_passwords up ON u.id = up.user_id
         WHERE u.username = $1 AND u.is_active = true
       `
       
@@ -34,13 +31,13 @@ export async function POST(request: NextRequest) {
       
       if (userResult.rows.length === 0) {
         return NextResponse.json(
-          { error: 'Invalid username or password' },
+          { error: 'Invalid username' },
           { status: 401 }
         )
       }
 
       const user = userResult.rows[0]
-      
+
       // 無効化されたユーザーはログイン拒否
       if (user.type === 'disabled') {
         return NextResponse.json(
@@ -48,30 +45,17 @@ export async function POST(request: NextRequest) {
           { status: 401 }
         )
       }
-
-      // パスワード検証
-      const passwordValid = await bcrypt.compare(password, user.password_hash)
-      
-      if (!passwordValid) {
-        return NextResponse.json(
-          { error: 'Invalid username or password' },
-          { status: 401 }
-        )
-      }
-
-      // パスワードハッシュを除外してレスポンス
-      const { password_hash, ...userResponse } = user
       
       return NextResponse.json({
         success: true,
         user: {
-          id: userResponse.id,
-          username: userResponse.username,
-          name: userResponse.name,
-          companyName: userResponse.company_name,
-          email: userResponse.email,
-          phoneNumber: userResponse.phone_number,
-          type: userResponse.type
+          id: user.id,
+          username: user.username,
+          name: user.name,
+          companyName: user.company_name,
+          email: user.email,
+          phoneNumber: user.phone_number,
+          type: user.type
         }
       })
       

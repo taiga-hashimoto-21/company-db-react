@@ -9,11 +9,10 @@ import { useAuth } from '@/contexts/AuthContext'
 
 export default function LoginPage() {
   const [username, setUsername] = useState('')
-  const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  
-  const { login } = useAuth()
+
+  const { login, user } = useAuth()
   const router = useRouter()
 
   // デバッグ用：ページ読み込み時にlocalStorageの内容を確認
@@ -28,22 +27,18 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      const success = await login({ username, password })
-      
-      if (success) {
-        // ログイン成功後、ユーザーの種類に応じてリダイレクト
-        const users = JSON.parse(localStorage.getItem('users') || '[]')
-        const user = users.find((u: any) => u.username === username)
-        
-        console.log('Login successful, user:', user) // デバッグ用
-        
-        if (user?.type === 'admin') {
+      const result = await login({ username })
+
+      if (result.success && result.user) {
+        console.log('Login successful, user:', result.user) // デバッグ用
+
+        if (result.user.type === 'admin') {
           router.push('/admin/users')
         } else {
-          router.push('/prtimes')
+          router.push('/')
         }
       } else {
-        setError('ユーザーIDまたはパスワードが間違っています')
+        setError('ユーザーIDが間違っているかアカウントが無効です')
       }
     } catch (err) {
       setError('ログインに失敗しました')
@@ -70,33 +65,24 @@ export default function LoginPage() {
                 {error}
               </div>
             )}
-            
+
             <form onSubmit={handleSubmit} className="space-y-4">
               <Input
                 label="ユーザーID"
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="管理者から発行されたユーザーID"
+                placeholder="ユーザーIDを入力"
                 required
                 disabled={loading}
               />
-              
-              <Input
-                label="パスワード"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="パスワードを入力"
-                required
-                disabled={loading}
-              />
-              
+
+
               <Button
                 type="submit"
                 className=""
                 loading={loading}
-                disabled={!username || !password}
+                disabled={!username}
                 style={{ padding: '10px', width: '150px', margin: '15px auto 0', display: 'block' }}
               >
                 ログイン
@@ -105,13 +91,13 @@ export default function LoginPage() {
 
             <div className="text-center mt-6">
               <button
-                onClick={() => router.push('/demo/prtimes')}
+                onClick={() => router.push('/demo')}
                 className="text-[var(--primary)] hover:text-[var(--primary-hover)] text-sm underline transition-colors"
               >
                 デモ画面を見る
               </button>
             </div>
-            
+
           </CardBody>
         </Card>
       </div>

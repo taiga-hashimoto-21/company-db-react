@@ -18,6 +18,8 @@ export interface PRTimesCompany {
   capitalAmountNumeric?: number
   establishedYear?: number
   establishedMonth?: number
+  businessCategory?: string
+  industryCategory?: string
   createdAt: string
   updatedAt: string
 }
@@ -33,6 +35,12 @@ export interface PRTimesSearchFilters {
   establishedYearMax?: number
   deliveryDateFrom?: string
   deliveryDateTo?: string
+  page?: number
+  limit?: number
+  exportAll?: boolean
+  tableOnly?: boolean
+  countOnly?: boolean
+  forceRefresh?: boolean
 }
 
 export interface PRTimesSearchResponse {

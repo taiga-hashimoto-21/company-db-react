@@ -3,7 +3,7 @@ import { cn } from '@/lib/utils'
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   children: ReactNode
-  variant?: 'primary' | 'secondary' | 'success' | 'warning' | 'error'
+  variant?: 'primary' | 'secondary' | 'success' | 'warning' | 'error' | 'danger'
   size?: 'sm' | 'md' | 'lg'
   loading?: boolean
 }
@@ -24,7 +24,8 @@ export function Button({
     secondary: 'bg-white hover:bg-gray-50 text-[var(--text-primary)] border border-[var(--border-color)] focus:ring-[var(--secondary)]',
     success: 'bg-[var(--success)] hover:bg-green-600 text-white focus:ring-[var(--success)]',
     warning: 'bg-[var(--warning)] hover:bg-orange-600 text-white focus:ring-[var(--warning)]',
-    error: 'bg-[var(--error)] hover:bg-red-600 text-white focus:ring-[var(--error)]'
+    error: 'bg-[var(--error)] hover:bg-red-600 text-white focus:ring-[var(--error)]',
+    danger: 'bg-red-600 hover:bg-red-700 text-white focus:ring-red-500'
   }
   
   const sizes = {

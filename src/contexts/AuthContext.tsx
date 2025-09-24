@@ -20,7 +20,6 @@ interface AuthState {
 
 interface LoginRequest {
   username: string
-  password: string
 }
 
 interface CreateUserRequest {
@@ -34,7 +33,7 @@ interface CreateUserRequest {
 }
 
 interface AuthContextType extends AuthState {
-  login: (credentials: LoginRequest) => Promise<boolean>
+  login: (credentials: LoginRequest) => Promise<{ success: boolean; user?: User }>
   logout: () => void
   createUser: (userData: CreateUserRequest) => Promise<boolean>
   updateUser: (userId: string, updates: Partial<User>) => Promise<boolean>
@@ -51,6 +50,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user: null
   })
 
+
   // 初期化時にlocalStorageから認証状態を復元
   useEffect(() => {
     const storedAuth = localStorage.getItem('authState')
@@ -65,7 +65,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  const login = async (credentials: LoginRequest): Promise<boolean> => {
+  // ユーザーステータス監視（無効化された場合の自動ログアウト）
+  useEffect(() => {
+    if (!authState.isAuthenticated || !authState.user) {
+      return
+    }
+
+    const checkUserStatus = async () => {
+      try {
+        const response = await fetch(`/api/users/${authState.user!.id}`)
+        if (response.ok) {
+          const data = await response.json()
+          if (data.user && data.user.type === 'disabled') {
+            // ユーザーが無効化されている場合、自動ログアウト
+            logout()
+          }
+        }
+      } catch (error) {
+        // エラーは静かに処理
+      }
+    }
+
+    // 初回チェック
+    checkUserStatus()
+
+    // 30秒ごとにステータスチェック
+    const interval = setInterval(checkUserStatus, 30000)
+
+    return () => clearInterval(interval)
+  }, [authState.isAuthenticated, authState.user])
+
+  const login = async (credentials: LoginRequest): Promise<{ success: boolean; user?: User }> => {
     try {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
@@ -76,33 +106,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
 
       if (!response.ok) {
-        const errorData = await response.json()
-        console.error('Login failed:', errorData.error)
-        return false
+        // エラーレスポンスを静かに処理（コンソールエラーを出力しない）
+        return { success: false }
       }
 
       const data = await response.json()
-      
+
       if (data.success && data.user) {
+        // 無効なユーザーはログインを拒否
+        if (data.user.type === 'disabled') {
+          return { success: false }
+        }
+
+        const userWithLogin = {
+          ...data.user,
+          lastLogin: new Date().toISOString()
+        }
+
         const newAuthState = {
           isAuthenticated: true,
-          user: {
-            ...data.user,
-            lastLogin: new Date().toISOString()
-          }
+          user: userWithLogin
         }
-        
+
         setAuthState(newAuthState)
         localStorage.setItem('authState', JSON.stringify(newAuthState))
-        return true
+        return { success: true, user: userWithLogin }
       }
 
-      return false
+      return { success: false }
     } catch (error) {
-      console.error('Login error:', error)
-      return false
+      // ネットワークエラーなどの予期しないエラーのみログ出力
+      console.error('Network error during login:', error)
+      return { success: false }
     }
   }
+
 
   const logout = () => {
     setAuthState({

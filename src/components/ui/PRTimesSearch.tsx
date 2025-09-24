@@ -9,13 +9,15 @@ import { PRTimesSearchFilters } from '@/types/prtimes'
 import { debounce } from '@/lib/utils'
 
 interface PRTimesSearchProps {
-  onSearch: (filters: PRTimesSearchFilters) => void
+  onSearch: (filters: PRTimesSearchFilters, countOnly?: boolean) => void
   onReset?: () => void
   loading?: boolean
   realtime?: boolean
+  totalCount?: number
+  countLoading?: boolean
 }
 
-export function PRTimesSearch({ onSearch, onReset, loading, realtime = true }: PRTimesSearchProps) {
+export function PRTimesSearch({ onSearch, onReset, loading, realtime = true, totalCount, countLoading }: PRTimesSearchProps) {
   const [filters, setFilters] = useState<PRTimesSearchFilters>({
     companyName: '',
     industry: [],
@@ -82,22 +84,22 @@ export function PRTimesSearch({ onSearch, onReset, loading, realtime = true }: P
     ]
   }
 
-  // デバウンスされたリアルタイム検索関数
-  const debouncedSearch = useCallback(
+  // デバウンスされた件数取得関数（リアルタイム用）
+  const debouncedCountSearch = useCallback(
     debounce((searchFilters: PRTimesSearchFilters) => {
       if (realtime) {
-        onSearch(searchFilters)
+        onSearch(searchFilters, true) // countOnlyフラグを追加
       }
     }, 500),
     [onSearch, realtime]
   )
 
-  // フィルタ変更時にリアルタイム検索を実行
+  // フィルタ変更時にリアルタイム件数検索を実行
   useEffect(() => {
     if (realtime) {
-      debouncedSearch(filters)
+      debouncedCountSearch(filters)
     }
-  }, [filters, debouncedSearch, realtime])
+  }, [filters, debouncedCountSearch, realtime])
 
   const handleInputChange = (field: keyof PRTimesSearchFilters, value: any) => {
     setFilters(prev => ({ ...prev, [field]: value }))
@@ -108,7 +110,7 @@ export function PRTimesSearch({ onSearch, onReset, loading, realtime = true }: P
   }
 
   const handleSearch = () => {
-    onSearch(filters)
+    onSearch(filters, false) // 完全な検索を実行
   }
 
   const handleReset = () => {
@@ -125,7 +127,7 @@ export function PRTimesSearch({ onSearch, onReset, loading, realtime = true }: P
       deliveryDateTo: ''
     }
     setFilters(resetFilters)
-    onSearch(resetFilters)
+    onSearch(resetFilters, false)
     if (onReset) {
       onReset()
     }
@@ -248,12 +250,34 @@ export function PRTimesSearch({ onSearch, onReset, loading, realtime = true }: P
         ※ 重複する企業については、1社のみを表示しております。
       </div>
 
+      {/* 該当件数表示 */}
+      <div style={{ padding: '10px' }}>
+        <div className="text-sm text-[var(--text-secondary)]">
+          該当件数：{countLoading ? (
+            <span className="text-[var(--primary)]">検索中...</span>
+          ) : (
+            <>
+              <span className="text-lg font-bold text-[var(--primary)]">{totalCount?.toLocaleString() || 0}</span>
+              <span>件</span>
+            </>
+          )}
+        </div>
+      </div>
+
       <div className="flex gap-3 pt-12 mt-8 border-t border-[var(--border-light)]" style={{ padding: '10px' }}>
+        <button
+          onClick={handleSearch}
+          disabled={loading}
+          style={{ marginTop: '10px', padding: '7px 15px', height: '35px' }}
+          className="smarthr-button bg-[var(--primary)] text-white border-transparent hover:bg-[var(--primary-hover)] text-sm"
+        >
+          {loading ? '検索中...' : '検索'}
+        </button>
         <button
           onClick={handleReset}
           disabled={loading}
           style={{ marginTop: '10px', padding: '7px 15px', height: '35px' }}
-          className="smarthr-button bg-[var(--primary)] text-white border-transparent hover:bg-[var(--primary-hover)] text-sm"
+          className="smarthr-button bg-gray-500 text-white border-transparent hover:bg-gray-600 text-sm"
         >
           {loading ? 'リセット中...' : 'リセット'}
         </button>

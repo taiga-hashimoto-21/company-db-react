@@ -33,7 +33,11 @@ export default function PRTimesPage() {
   const [exporting, setExporting] = useState(false)
   const [responseTime, setResponseTime] = useState<number>(0)
   const [cacheStatus, setCacheStatus] = useState<'hit' | 'miss' | null>(null)
-  const [copyFormat, setCopyFormat] = useState<'url' | 'url_name' | 'url_name_rep'>('url')
+  const [copyFormat, setCopyFormat] = useState<'url' | 'url_name' | 'url_name_rep' | 'url_name_rep_press'>('url')
+  const [totalCount, setTotalCount] = useState<number>(0)
+  const [countLoading, setCountLoading] = useState(false)
+  const [searchResultCount, setSearchResultCount] = useState<number>(0)
+  const [hasSearched, setHasSearched] = useState(false)
   const [notification, setNotification] = useState<{message: string, visible: boolean}>({
     message: '',
     visible: false
@@ -58,8 +62,46 @@ export default function PRTimesPage() {
     }
   }, [user, router, isLoading])
 
+  // 件数のみ取得（リアルタイム検索用）
+  const getCount = useCallback(async (filters: PRTimesSearchFilters) => {
+    setCountLoading(true)
+    try {
+      const searchParams = {
+        ...filters,
+        countOnly: true
+      }
+
+      const response = await fetch('/api/prtimes/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(searchParams)
+      })
+
+      if (!response.ok) {
+        throw new Error(`件数取得に失敗しました (${response.status})`)
+      }
+
+      const data: PRTimesSearchResponse = await response.json()
+      setTotalCount(data.pagination.totalCount)
+
+    } catch (err) {
+      console.error('Count error:', err)
+      setTotalCount(0)
+    } finally {
+      setCountLoading(false)
+    }
+  }, [])
+
   // 送信先リストデータ用の検索（全件取得）
-  const searchCompanies = useCallback(async (filters: PRTimesSearchFilters, page: number = 1) => {
+  const searchCompanies = useCallback(async (filters: PRTimesSearchFilters, countOnly: boolean = false, page: number = 1) => {
+    // 件数のみの場合はgetCountを呼び出す
+    if (countOnly) {
+      getCount(filters)
+      return
+    }
+
     const startTime = Date.now()
     setLoading(true)
     setError('')
@@ -69,6 +111,7 @@ export default function PRTimesPage() {
     setTableCompanies([])
     setTablePage(1)
     setHasMoreTableData(true)
+    setCompanies([]) // textareaの内容をリセット
     
     try {
       const searchParams = {
@@ -97,6 +140,9 @@ export default function PRTimesPage() {
       setCompanies(data.companies)
       setPagination(data.pagination)
       setCurrentFilters(filters)
+      setTotalCount(data.pagination.totalCount)
+      setSearchResultCount(data.pagination.totalCount)
+      setHasSearched(true)
       
       // パフォーマンス情報の表示
       if (data._responseTime) {
@@ -129,10 +175,10 @@ export default function PRTimesPage() {
     } finally {
       setLoading(false)
     }
-    
+
     // 初回テーブルデータ読み込み
     loadTableData(filters, 1)
-  }, [])
+  }, [getCount])
 
   // テーブル用データの読み込み（50件ずつ）
   const loadTableData = useCallback(async (filters: PRTimesSearchFilters, page: number, append: boolean = false) => {
@@ -220,19 +266,15 @@ export default function PRTimesPage() {
         case 'url_name':
           return `${company.companyWebsite},${company.companyName}`
         case 'url_name_rep':
-        default:
           return `${company.companyWebsite},${company.companyName},${representative}`
+        case 'url_name_rep_press':
+        default:
+          return `${company.companyWebsite},${company.companyName},${representative},${company.pressReleaseUrl || ''}`
       }
     }).join('\n')
   }, [displayCompanies, copyFormat])
 
-  
-  useEffect(() => {
-    if (user) {
-      const defaultFilters: PRTimesSearchFilters = {}
-      searchCompanies(defaultFilters)
-    }
-  }, [user, searchCompanies])
+  // 初回は自動検索せず、ユーザーの検索操作を待つ
 
   const handleLogout = () => {
     logout()
@@ -268,12 +310,12 @@ export default function PRTimesPage() {
     }
   }, [tableLoading, hasMoreTableData, tablePage, currentFilters, loadTableData])
 
-  const handleSearch = useCallback((filters: PRTimesSearchFilters) => {
-    searchCompanies(filters, 1)
+  const handleSearch = useCallback((filters: PRTimesSearchFilters, countOnly?: boolean) => {
+    searchCompanies(filters, countOnly, 1)
   }, [searchCompanies])
   
   const handlePageChange = (page: number) => {
-    searchCompanies(currentFilters, page)
+    searchCompanies(currentFilters, false, page)
   }
 
   const handleCopy = useCallback(() => {
@@ -286,8 +328,8 @@ export default function PRTimesPage() {
   }, [copyData, showNotification])
 
   const handleReset = useCallback(() => {
-    showNotification('検索条件をリセットしました！')
-  }, [showNotification])
+    // リセット時の通知は削除
+  }, [])
 
   const handleExport = useCallback(async () => {
     setExporting(true)
@@ -328,11 +370,18 @@ export default function PRTimesPage() {
               '会社名': company.companyName
             }
           case 'url_name_rep':
-          default:
             return {
               'ホームページURL': company.companyWebsite,
               '会社名': company.companyName,
               '代表者名': representative
+            }
+          case 'url_name_rep_press':
+          default:
+            return {
+              'ホームページURL': company.companyWebsite,
+              '会社名': company.companyName,
+              '代表者名': representative,
+              'プレスリリースURL': company.pressReleaseUrl || ''
             }
         }
       })
@@ -374,9 +423,9 @@ export default function PRTimesPage() {
         </div>
       </div>
       
-      <Header 
+      <Header
         title="PR TIMES企業検索"
-        user={{ name: user.name, type: user.type }}
+        user={{ name: user.name, type: user.type as 'admin' | 'user' }}
         onLogout={handleLogout}
       />
       
@@ -401,11 +450,13 @@ export default function PRTimesPage() {
           </div>
           <div>
             <div className="space-y-6">
-              <PRTimesSearch 
+              <PRTimesSearch
                 onSearch={handleSearch}
                 onReset={handleReset}
                 loading={loading}
                 realtime={true}
+                totalCount={totalCount}
+                countLoading={countLoading}
               />
             </div>
           </div>
@@ -422,7 +473,7 @@ export default function PRTimesPage() {
         <div className="smarthr-card w-full">
           <div className="mb-6">
             <h2 style={{ marginBottom: '10px' }} className="text-lg font-semibold text-[var(--text-primary)]">
-              検索結果 ({loading ? '検索中...' : `${formatNumber(displayCompanies.length)}件`})
+              検索結果 ({loading ? '検索中...' : hasSearched ? `${formatNumber(searchResultCount)}件` : '-'})
             </h2>
           </div>
           
@@ -439,7 +490,7 @@ export default function PRTimesPage() {
                     name="copyFormat"
                     value="url"
                     checked={copyFormat === 'url'}
-                    onChange={(e) => setCopyFormat(e.target.value as 'url' | 'url_name' | 'url_name_rep')}
+                    onChange={(e) => setCopyFormat(e.target.value as 'url' | 'url_name' | 'url_name_rep' | 'url_name_rep_press')}
                     className="mr-2"
                   />
                   <span className="text-sm">ホームページURLのみ</span>
@@ -450,7 +501,7 @@ export default function PRTimesPage() {
                     name="copyFormat"
                     value="url_name"
                     checked={copyFormat === 'url_name'}
-                    onChange={(e) => setCopyFormat(e.target.value as 'url' | 'url_name' | 'url_name_rep')}
+                    onChange={(e) => setCopyFormat(e.target.value as 'url' | 'url_name' | 'url_name_rep' | 'url_name_rep_press')}
                     className="mr-2"
                   />
                   <span className="text-sm">ホームページURLと会社名</span>
@@ -461,10 +512,21 @@ export default function PRTimesPage() {
                     name="copyFormat"
                     value="url_name_rep"
                     checked={copyFormat === 'url_name_rep'}
-                    onChange={(e) => setCopyFormat(e.target.value as 'url' | 'url_name' | 'url_name_rep')}
+                    onChange={(e) => setCopyFormat(e.target.value as 'url' | 'url_name' | 'url_name_rep' | 'url_name_rep_press')}
                     className="mr-2"
                   />
                   <span className="text-sm">ホームページURLと会社名と代表者名</span>
+                </label>
+                <label className="flex items-center">
+                  <input
+                    type="radio"
+                    name="copyFormat"
+                    value="url_name_rep_press"
+                    checked={copyFormat === 'url_name_rep_press'}
+                    onChange={(e) => setCopyFormat(e.target.value as 'url' | 'url_name' | 'url_name_rep' | 'url_name_rep_press')}
+                    className="mr-2"
+                  />
+                  <span className="text-sm">ホームページURLと会社名と代表者名とプレスリリースURL</span>
                 </label>
               </div>
             </div>
@@ -492,98 +554,6 @@ export default function PRTimesPage() {
               >
                 {exporting ? 'エクスポート中...' : 'CSVエクスポート'}
               </button>
-            </div>
-          </div>
-          
-          <div>
-            <div className="overflow-x-auto">
-              <table className="smarthr-table w-full">
-                <thead>
-                  <tr>
-                    <th style={{ width: '25%' }}>ホームページURL</th>
-                    <th style={{ width: '25%' }}>会社名</th>
-                    <th style={{ width: '25%' }}>代表者名</th>
-                    <th style={{ width: '25%' }}>PR TIMESリンク</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading ? (
-                    Array.from({ length: 10 }).map((_, index) => (
-                      <tr key={`loading-${index}`}>
-                        <td colSpan={4} className="text-center">
-                          <div className="animate-pulse bg-[var(--bg-light)] h-6 rounded"></div>
-                        </td>
-                      </tr>
-                    ))
-                  ) : tableCompanies.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="py-8 text-center text-[var(--text-secondary)]">
-                        検索条件に一致する企業が見つかりませんでした
-                      </td>
-                    </tr>
-                  ) : (
-                    tableCompanies.map((company, index) => (
-                      <tr key={company.id}>
-                        <td>
-                          {company.companyWebsite ? (
-                            <a 
-                              href={company.companyWebsite} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              className="text-[var(--primary)] hover:text-[var(--primary-hover)] hover:underline break-all transition-colors"
-                            >
-                              {company.companyWebsite}
-                            </a>
-                          ) : (
-                            <span className="text-[var(--text-light)]">-</span>
-                          )}
-                        </td>
-                        <td>
-                          <div className="font-medium text-[var(--text-primary)]">
-                            {company.companyName}
-                          </div>
-                        </td>
-                        <td>
-                          <span className="text-sm">
-                            {company.representative || '-'}
-                          </span>
-                        </td>
-                        <td>
-                          {company.pressReleaseUrl ? (
-                            <a 
-                              href={company.pressReleaseUrl} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              className="text-[var(--primary)] hover:text-[var(--primary-hover)] hover:underline break-all transition-colors"
-                            >
-                              プレスリリースを見る
-                            </a>
-                          ) : (
-                            <span className="text-[var(--text-light)]">-</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-              
-              {/* 無限スクロール用のローディング要素 */}
-              {hasMoreTableData && (
-                <div ref={loadMoreRef} className="py-4 text-center text-[var(--text-secondary)]">
-                  {tableLoading ? (
-                    <div className="animate-pulse">さらにデータを読み込み中...</div>
-                  ) : (
-                    <div>スクロールしてさらに読み込む</div>
-                  )}
-                </div>
-              )}
-              
-              {!hasMoreTableData && tableCompanies.length > 0 && (
-                <div className="py-4 text-center text-[var(--text-secondary)]">
-                  全てのデータを表示しました
-                </div>
-              )}
             </div>
           </div>
         </div>

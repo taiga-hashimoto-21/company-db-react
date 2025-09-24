@@ -224,9 +224,9 @@ export default function SearchPage() {
 
   return (
     <div className="min-h-screen">
-      <Header 
+      <Header
         title="企業データベース"
-        user={{ name: user.name, type: user.type }}
+        user={{ name: user.name, type: user.type as 'admin' | 'user' }}
         onLogout={handleLogout}
       />
       

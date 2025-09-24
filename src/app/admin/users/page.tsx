@@ -25,12 +25,18 @@ export default function AdminUsersPage() {
   const { user, logout, getAllUsers, createUser, updateUser, updatePassword, deleteUser } = useAuth()
   const router = useRouter()
   const [users, setUsers] = useState<User[]>([])
-  const [userPasswords, setUserPasswords] = useState<Record<string, string>>({})
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [editingUser, setEditingUser] = useState<User | null>(null)
   const [showPasswordForm, setShowPasswordForm] = useState<string | null>(null)
   const [editingRowId, setEditingRowId] = useState<string | null>(null)
   const [editingRowData, setEditingRowData] = useState<Partial<User>>({})
+
+  // フィルター状態
+  const [filters, setFilters] = useState({
+    showAdmin: true,     // 管理者
+    showUser: true,      // ユーザー
+    showDisabled: true   // 無効
+  })
 
   // フォーム状態
   const [formData, setFormData] = useState({
@@ -38,9 +44,7 @@ export default function AdminUsersPage() {
     name: '',
     companyName: '',
     phoneNumber: '',
-    email: '',
-    type: 'user' as 'admin' | 'user' | 'disabled',
-    password: ''
+    type: 'user' as 'admin' | 'user' | 'disabled'
   })
 
   const [passwordData, setPasswordData] = useState({
@@ -86,64 +90,54 @@ export default function AdminUsersPage() {
     }, 5000)
   }, [])
 
-  const generateRandomPassword = () => {
-    const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
-    let password = ''
-    for (let i = 0; i < 8; i++) {
-      password += chars.charAt(Math.floor(Math.random() * chars.length))
-    }
-    return password
-  }
-
-  const handleGeneratePassword = () => {
-    const newPassword = generateRandomPassword()
-    setFormData({...formData, password: newPassword})
-  }
 
   const loadUsers = async () => {
     const allUsers = await getAllUsers()
     setUsers(allUsers)
-    
-    // 各ユーザーのパスワードを取得
-    const passwords: Record<string, string> = {}
-    for (const user of allUsers) {
-      try {
-        const response = await fetch(`/api/users/${user.id}/password`)
-        if (response.ok) {
-          const data = await response.json()
-          passwords[user.id] = data.password
-        }
-      } catch (error) {
-        console.error(`Failed to get password for user ${user.username}:`, error)
-        passwords[user.id] = '********'
-      }
-    }
-    setUserPasswords(passwords)
   }
+
+  // フィルターされたユーザーリスト
+  const filteredUsers = users.filter(user => {
+    if (filters.showAdmin && user.type === 'admin') {
+      return true
+    }
+    if (filters.showUser && user.type === 'user') {
+      return true
+    }
+    if (filters.showDisabled && user.type === 'disabled') {
+      return true
+    }
+    return false
+  })
+
+  // フィルター用のカウント計算
+  const getCounts = () => {
+    const adminCount = users.filter(u => u.type === 'admin').length
+    const userCount = users.filter(u => u.type === 'user').length
+    const disabledCount = users.filter(u => u.type === 'disabled').length
+    return { adminCount, userCount, disabledCount }
+  }
+
+  const { adminCount, userCount, disabledCount } = getCounts()
 
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault()
-    
-    if (formData.password.length < 6) {
-      showNotification('パスワードは6文字以上で設定してください')
-      return
-    }
 
     const success = await createUser({
       username: formData.username,
       name: formData.name,
       companyName: formData.companyName,
       phoneNumber: formData.phoneNumber,
-      email: formData.email,
+      email: '', // 空文字でセット
       type: formData.type,
-      password: formData.password
+      password: 'user123' // デフォルトパスワード
     })
 
     if (success) {
       setShowCreateForm(false)
-      setFormData({ username: '', name: '', companyName: '', phoneNumber: '', email: '', type: 'user', password: '' })
+      setFormData({ username: '', name: '', companyName: '', phoneNumber: '', type: 'user' })
       loadUsers()
-      showNotification('ユーザーを作成しました')
+      showNotification('ユーザーを作成しました（パスワード: user123）')
     } else {
       showNotification('ユーザー作成に失敗しました（ユーザーIDが重複している可能性があります）')
     }
@@ -157,13 +151,13 @@ export default function AdminUsersPage() {
       name: formData.name,
       companyName: formData.companyName,
       phoneNumber: formData.phoneNumber,
-      email: formData.email,
+      email: '', // 空文字でセット
       type: formData.type
     })
 
     if (success) {
       setEditingUser(null)
-      setFormData({ username: '', name: '', companyName: '', phoneNumber: '', email: '', type: 'user', password: '' })
+      setFormData({ username: '', name: '', companyName: '', phoneNumber: '', type: 'user' })
       loadUsers()
       showNotification('ユーザー情報を更新しました')
     } else {
@@ -216,9 +210,7 @@ export default function AdminUsersPage() {
       name: editUser.name,
       companyName: editUser.companyName || '',
       phoneNumber: editUser.phoneNumber || '',
-      email: editUser.email || '',
-      type: editUser.type,
-      password: ''
+      type: editUser.type
     })
   }
 
@@ -314,7 +306,19 @@ export default function AdminUsersPage() {
             </div>
             <div>
               <form onSubmit={handleCreateUser} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="mb-4" style={{ width: '50%' }}>
+                  <Select
+                    label="権限"
+                    value={formData.type}
+                    onChange={(e) => setFormData({...formData, type: e.target.value as 'admin' | 'user' | 'disabled'})}
+                    options={[
+                      { value: 'user', label: 'ユーザー' },
+                      { value: 'admin', label: '管理者' },
+                      { value: 'disabled', label: '無効' }
+                    ]}
+                  />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2">
                   <Input
                     label="ユーザーID"
                     type="text"
@@ -341,43 +345,6 @@ export default function AdminUsersPage() {
                     value={formData.phoneNumber}
                     onChange={(e) => setFormData({...formData, phoneNumber: e.target.value})}
                   />
-                  <Input
-                    label="メールアドレス"
-                    type="email"
-                    value={formData.email}
-                    onChange={(e) => setFormData({...formData, email: e.target.value})}
-                  />
-                  <Select
-                    label="権限"
-                    value={formData.type}
-                    onChange={(e) => setFormData({...formData, type: e.target.value as 'admin' | 'user' | 'disabled'})}
-                    options={[
-                      { value: 'user', label: 'ユーザー' },
-                      { value: 'admin', label: '管理者' },
-                      { value: 'disabled', label: '無効' }
-                    ]}
-                  />
-                  <div>
-                    <label className="block text-sm font-medium mb-2">パスワード</label>
-                    <div className="flex gap-2">
-                      <Input
-                        type="text"
-                        value={formData.password}
-                        onChange={(e) => setFormData({...formData, password: e.target.value})}
-                        required
-                        placeholder="6文字以上"
-                        className="flex-1"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleGeneratePassword}
-                        className="smarthr-button bg-[var(--secondary)] text-[var(--text-primary)] border-[var(--border-light)] hover:bg-[var(--bg-light)] text-sm"
-                        style={{ padding: '8px 12px', whiteSpace: 'nowrap' }}
-                      >
-                        生成
-                      </button>
-                    </div>
-                  </div>
                 </div>
                 <div className="flex gap-3" style={{ marginTop: '20px' }}>
                   <button 
@@ -387,11 +354,11 @@ export default function AdminUsersPage() {
                   >
                     作成
                   </button>
-                  <button 
-                    type="button" 
+                  <button
+                    type="button"
                     onClick={() => {
                       setShowCreateForm(false)
-                      setFormData({ username: '', name: '', companyName: '', phoneNumber: '', email: '', type: 'user', password: '' })
+                      setFormData({ username: '', name: '', companyName: '', phoneNumber: '', type: 'user' })
                     }}
                     className="smarthr-button bg-[var(--secondary)] text-[var(--text-primary)] border-[var(--border-light)] hover:bg-[var(--bg-light)]"
                     style={{ padding: '8px 16px' }}
@@ -438,12 +405,6 @@ export default function AdminUsersPage() {
                     value={formData.phoneNumber}
                     onChange={(e) => setFormData({...formData, phoneNumber: e.target.value})}
                   />
-                  <Input
-                    label="メールアドレス"
-                    type="email"
-                    value={formData.email}
-                    onChange={(e) => setFormData({...formData, email: e.target.value})}
-                  />
                   <Select
                     label="権限"
                     value={formData.type}
@@ -464,11 +425,11 @@ export default function AdminUsersPage() {
                   >
                     更新
                   </button>
-                  <button 
-                    type="button" 
+                  <button
+                    type="button"
                     onClick={() => {
                       setEditingUser(null)
-                      setFormData({ username: '', name: '', companyName: '', phoneNumber: '', email: '', type: 'user', password: '' })
+                      setFormData({ username: '', name: '', companyName: '', phoneNumber: '', type: 'user' })
                     }}
                     className="smarthr-button bg-[var(--secondary)] text-[var(--text-primary)] border-[var(--border-light)] hover:bg-[var(--bg-light)]"
                     style={{ padding: '8px 16px' }}
@@ -488,34 +449,72 @@ export default function AdminUsersPage() {
               登録済みユーザー ({users.length}名)
             </h2>
           </div>
+
+          {/* フィルター */}
+          <div className="bg-gray-50 rounded-lg" style={{ padding: '15px', marginBottom: '10px' }}>
+            <div style={{ marginBottom: '10px' }}>
+              <span className="text-sm font-medium text-gray-700">表示フィルター</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-6">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={filters.showAdmin}
+                    onChange={(e) => setFilters({...filters, showAdmin: e.target.checked})}
+                    className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
+                  />
+                  <span className="text-sm text-gray-700">管理者</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={filters.showUser}
+                    onChange={(e) => setFilters({...filters, showUser: e.target.checked})}
+                    className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
+                  />
+                  <span className="text-sm text-gray-700">ユーザー</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={filters.showDisabled}
+                    onChange={(e) => setFilters({...filters, showDisabled: e.target.checked})}
+                    className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
+                  />
+                  <span className="text-sm text-gray-700">無効</span>
+                </label>
+              </div>
+              <div className="flex items-center gap-4 text-sm">
+                <span className="text-black">管理者 <span className="font-bold text-base" style={{ color: '#00a0a9ff' }}>{adminCount}</span> 人</span>
+                <span className="text-black">ユーザー <span className="font-bold text-base" style={{ color: '#00a0a9ff' }}>{userCount}</span> 人</span>
+                <span className="text-black">無効 <span className="font-bold text-base" style={{ color: '#00a0a9ff' }}>{disabledCount}</span> 人</span>
+              </div>
+            </div>
+          </div>
           <div>
-            <div className="overflow-x-auto">
-              <table className="smarthr-table w-full">
-                <thead>
-                  <tr className="border-b border-[var(--border-color)]">
-                    <th className="text-left py-3 px-4 font-medium w-24">ユーザーID</th>
-                    <th className="text-left py-3 px-4 font-medium w-24">パスワード</th>
-                    <th className="text-left py-3 px-4 font-medium w-24">権限</th>
-                    <th className="text-left py-3 px-4 font-medium w-32">会社名</th>
-                    <th className="text-left py-3 px-4 font-medium w-48">詳細</th>
-                    <th className="text-left py-3 px-4 font-medium w-20">編集</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {users.map((u) => {
+            <div className="border border-[var(--border-color)] rounded-lg overflow-hidden" style={{ height: 'auto', maxHeight: '400px' }}>
+              <div className="overflow-x-auto h-full">
+                <table className="smarthr-table w-full">
+                  <thead className="sticky top-0 bg-white z-10">
+                    <tr className="border-b border-[var(--border-color)]">
+                      <th className="text-left px-3 font-medium w-24" style={{ paddingTop: '10px', paddingBottom: '10px' }}>ユーザーID</th>
+                      <th className="text-left px-3 font-medium w-24" style={{ paddingTop: '10px', paddingBottom: '10px' }}>権限</th>
+                      <th className="text-left px-3 font-medium w-32" style={{ paddingTop: '10px', paddingBottom: '10px' }}>会社名</th>
+                      <th className="text-left px-3 font-medium w-48" style={{ paddingTop: '10px', paddingBottom: '10px' }}>詳細</th>
+                      <th className="text-left px-3 font-medium w-20" style={{ paddingTop: '10px', paddingBottom: '10px' }}>編集</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredUsers.map((u) => {
                     const isEditing = editingRowId === u.id
                     return (
                       <tr key={u.id} className="border-b border-[var(--border-color)] hover:bg-[var(--bg-secondary)]">
                         {/* ユーザーID */}
-                        <td className="py-4 px-4 font-medium">{u.username}</td>
-                        
-                        {/* パスワード */}
-                        <td className="py-4 px-4 text-sm font-mono">
-                          {userPasswords[u.id] || '読み込み中...'}
-                        </td>
-                        
+                        <td className="px-3 font-medium" style={{ paddingTop: '10px', paddingBottom: '10px', lineHeight: '22px' }}>{u.username}</td>
+
                         {/* 権限 */}
-                        <td className="py-4 px-4">
+                        <td className="px-3" style={{ paddingTop: '10px', paddingBottom: '10px', lineHeight: '22px' }}>
                           {isEditing ? (
                             <select
                               value={editingRowData.type || 'user'}
@@ -539,9 +538,9 @@ export default function AdminUsersPage() {
                             </span>
                           )}
                         </td>
-                        
+
                         {/* 会社名 */}
-                        <td className="py-4 px-4 text-sm">
+                        <td className="px-3 text-sm" style={{ paddingTop: '10px', paddingBottom: '10px', lineHeight: '22px' }}>
                           {isEditing ? (
                             <input
                               type="text"
@@ -551,11 +550,11 @@ export default function AdminUsersPage() {
                             />
                           ) : (u.companyName || '-')}
                         </td>
-                        
-                        {/* 詳細（氏名、電話番号、メールアドレス） */}
-                        <td className="py-4 px-4 text-sm">
+
+                        {/* 詳細（氏名、電話番号） */}
+                        <td className="px-3 text-sm" style={{ paddingTop: '10px', paddingBottom: '10px', lineHeight: '22px' }}>
                           {isEditing ? (
-                            <div className="space-y-2">
+                            <div className="space-y-1">
                               <input
                                 type="text"
                                 value={editingRowData.name || ''}
@@ -570,26 +569,18 @@ export default function AdminUsersPage() {
                                 className="w-full px-2 py-1 border border-[var(--border-color)] rounded text-sm"
                                 placeholder="電話番号"
                               />
-                              <input
-                                type="email"
-                                value={editingRowData.email || ''}
-                                onChange={(e) => setEditingRowData({...editingRowData, email: e.target.value})}
-                                className="w-full px-2 py-1 border border-[var(--border-color)] rounded text-sm"
-                                placeholder="メールアドレス"
-                              />
                             </div>
                           ) : (
                             <div className="space-y-1 text-xs">
                               <div>{u.name || '-'}</div>
                               <div>{u.phoneNumber || '-'}</div>
-                              <div>{u.email || '-'}</div>
                             </div>
                           )}
                         </td>
-                        
+
                         {/* 編集アイコン/ボタン */}
-                        <td className="py-4 px-4 w-24">
-                          <div className="h-16 flex items-center justify-center">
+                        <td className="px-3 w-24" style={{ paddingTop: '10px', paddingBottom: '10px', lineHeight: '22px' }}>
+                          <div className="h-12 flex items-center justify-center">
                             {isEditing ? (
                               <div className="flex flex-col gap-0.5 w-full">
                                 <button
@@ -635,9 +626,10 @@ export default function AdminUsersPage() {
                         </td>
                       </tr>
                     )
-                  })}
-                </tbody>
-              </table>
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>

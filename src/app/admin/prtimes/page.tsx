@@ -298,6 +298,7 @@ export default function AdminPRTimesPage() {
 
     // アップロード中のファイル名を最初に保存（selectedFileがnullになる前に）
     const fileName = selectedFile.name
+    const fileSize = selectedFile.size
 
     setUploading(true)
 
@@ -306,19 +307,29 @@ export default function AdminPRTimesPage() {
     const lines = fileContent.split('\n').filter(line => line.trim() !== '')
     const totalRows = Math.max(0, lines.length - 2) // ヘッダーを除く
 
+    // ファイルサイズに基づいて処理方式を決定（10MB以上は高速API使用）
+    const useBulkUpload = fileSize > 10 * 1024 * 1024 // 10MB以上
+    const apiEndpoint = useBulkUpload ? '/api/prtimes/bulk-upload' : '/api/prtimes/upload'
+    const estimatedTime = useBulkUpload ? '2-5分' : '通常処理'
+
     setUploadProgress({
       show: true,
       processed: 0,
       total: totalRows,
       errors: 0,
-      fileName: fileName
+      fileName: `${fileName} (${useBulkUpload ? '高速処理' : '通常処理'} - 予想時間: ${estimatedTime})`
     })
+
+    // 高速処理の場合は事前通知
+    if (useBulkUpload) {
+      showNotification(`大容量ファイルのため高速処理(COPYコマンド)を使用します。予想時間: ${estimatedTime}`)
+    }
 
     try {
       const formData = new FormData()
       formData.append('file', selectedFile)
 
-      const response = await fetch('/api/prtimes/upload', {
+      const response = await fetch(apiEndpoint, {
         method: 'POST',
         body: formData
       })
@@ -329,6 +340,12 @@ export default function AdminPRTimesPage() {
 
       const result = await response.json()
       console.log('📤 Upload started:', result)
+
+      // 高速処理の場合は追加情報を表示
+      if (useBulkUpload) {
+        console.log('⚡ Using bulk upload (COPY command)')
+        showNotification(`高速処理開始: ${result.method || 'COPY'}コマンドで処理中...`)
+      }
 
       // アップロード開始後、進捗を監視
       if (result.batchId) {
@@ -344,10 +361,10 @@ export default function AdminPRTimesPage() {
 
       const fileInput = document.getElementById('csvFile') as HTMLInputElement
       if (fileInput) fileInput.value = ''
-      
+
     } catch (error) {
       console.error('Upload error:', error)
-      showNotification('アップロードに失敗しました')
+      showNotification(`アップロードに失敗しました: ${error.message}`)
     } finally {
       setUploading(false)
       // エラー時はプログレスバーとファイル名をクリア
@@ -419,9 +436,17 @@ export default function AdminPRTimesPage() {
         <div className="smarthr-card w-full mb-8">
           <div className="mb-6">
             <h2 className="text-xl font-semibold text-[var(--text-primary)] mb-2">CSVファイルアップロード</h2>
-            <p className="text-sm text-[var(--text-secondary)]">
+            <p className="text-sm text-[var(--text-secondary)] mb-3">
               PR TIMESから取得した企業データをCSVファイルでアップロードできます
             </p>
+            {/* <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <p className="text-sm text-blue-800">
+                <strong>🚀 高速処理について:</strong><br />
+                • 10MB未満: 通常処理（1行ずつ処理）<br />
+                • 10MB以上: 高速処理（COPYコマンド使用、約200倍高速）<br />
+                • 10万件のデータも約2-5分で完了します
+              </p>
+            </div> */}
           </div>
           <div>
             <div className="space-y-4">

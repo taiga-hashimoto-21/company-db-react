@@ -11,7 +11,8 @@
     "db:seed:small": "node scripts/seed-database.js 10000",
     "db:seed:large": "node scripts/seed-database.js 1000000",
     "db:seed:full": "node scripts/seed-database.js 12000000",
-    "db:migrate:prtimes": "node scripts/migrate-prtimes.js"
+    "db:migrate:prtimes": "node scripts/migrate-prtimes.js",
+    "db:import:prtimes": "node scripts/bulk-import-prtimes.js"
   },
   "dependencies": {
     "@supabase/auth-ui-react": "^0.4.7",

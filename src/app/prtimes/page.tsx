@@ -71,7 +71,7 @@ export default function PRTimesPage() {
         countOnly: true
       }
 
-      const response = await fetch('/api/prtimes/search', {
+      const response = await fetch('/api/prtimes/fast-search', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -119,7 +119,7 @@ export default function PRTimesPage() {
         page
       }
 
-      const response = await fetch('/api/prtimes/search', {
+      const response = await fetch('/api/prtimes/fast-search', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -191,7 +191,7 @@ export default function PRTimesPage() {
         tableOnly: true
       }
 
-      const response = await fetch('/api/prtimes/search', {
+      const response = await fetch('/api/prtimes/fast-search', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -339,7 +339,7 @@ export default function PRTimesPage() {
         exportAll: true
       }
 
-      const response = await fetch('/api/prtimes/search', {
+      const response = await fetch('/api/prtimes/fast-search', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

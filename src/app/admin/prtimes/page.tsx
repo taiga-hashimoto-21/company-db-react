@@ -85,14 +85,20 @@ export default function AdminPRTimesPage() {
     try {
       // 検索APIとデータベースAPIを並列で実行
       const [searchResponse, dbResponse] = await Promise.all([
-        fetch('/api/prtimes/search', {
+        fetch('/api/prtimes/fast-search', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ exportAll: true })
         }),
-        fetch('/api/prtimes?page=1&limit=1') // 件数のみ取得
+        fetch('/api/prtimes/fast-search', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ countOnly: true })
+        }) // 件数のみ取得
       ])
 
       if (!searchResponse.ok) throw new Error('Failed to fetch companies')
@@ -102,9 +108,9 @@ export default function AdminPRTimesPage() {
       const dbData = await dbResponse.json()
 
       setAllCompanies(searchData.companies)
-      // データベースAPIから最新の件数を取得
-      setTotalCount(dbData.pagination.totalCount) // 全件数
-      setUniqueCount(dbData.pagination.uniqueCount) // ユニーク企業数
+      // fast-search APIから件数を取得
+      setTotalCount(searchData.pagination.totalRawCount || searchData.pagination.totalCount) // 重複除去前の全件数
+      setUniqueCount(searchData.pagination.totalCount) // 重複除去後のユニーク企業数
       setHasMoreAdminData(false) // 全データ取得済み
     } catch (error) {
       console.error('Error fetching companies:', error)
@@ -117,7 +123,13 @@ export default function AdminPRTimesPage() {
     if (!append) setLoading(true)
     
     try {
-      const response = await fetch(`/api/prtimes?page=${page}&limit=50`)
+      const response = await fetch('/api/prtimes/fast-search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ page, tableOnly: true })
+      })
       if (!response.ok) throw new Error('Failed to fetch companies')
       
       const data = await response.json()
@@ -128,8 +140,8 @@ export default function AdminPRTimesPage() {
         setAllCompanies(data.companies)
       }
       
-      setTotalCount(data.pagination.totalCount) // 全件数
-      setUniqueCount(data.pagination.uniqueCount) // ユニーク企業数（APIから取得）
+      setTotalCount(data.pagination.totalRawCount || data.pagination.totalCount) // 重複除去前の全件数
+      setUniqueCount(data.pagination.totalCount) // 重複除去後のユニーク企業数
       setHasMoreAdminData(data.pagination.hasNextPage)
     } catch (error) {
       console.error('Error fetching companies:', error)

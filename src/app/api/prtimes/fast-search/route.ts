@@ -297,7 +297,7 @@ export async function POST(request: NextRequest) {
   const startTime = Date.now()
 
   try {
-    let body = {}
+    let body: any = {}
     try {
       const text = await request.text()
       if (text.trim()) {
@@ -329,8 +329,8 @@ export async function POST(request: NextRequest) {
         searchParams.offset = 0  // countOnlyではoffsetは不要
       }
       searchResult = await searchWithMeiliSearch(searchParams)
-    } catch (error) {
-      console.warn('⚠️ MeiliSearch failed, using PostgreSQL fallback:', error.message)
+    } catch (error: any) {
+      console.warn('⚠️ MeiliSearch failed, using PostgreSQL fallback:', error?.message || error)
       searchResult = await fallbackSearch(body)
       searchMethod = 'postgresql'
     }

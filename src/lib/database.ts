@@ -238,7 +238,7 @@ export async function deleteCompany(companyId: number): Promise<boolean> {
   try {
     const query = 'DELETE FROM companies WHERE id = $1'
     const result = await client.query(query, [companyId])
-    return result.rowCount > 0
+    return (result.rowCount || 0) > 0
 
   } finally {
     client.release()

@@ -246,7 +246,7 @@ async function globalInitializeCacheInternal() {
           processedCount++
         } catch (error) {
           errorCount++
-          console.warn(`⚠️ Error processing row ${row.id}:`, error.message)
+          console.warn(`⚠️ Error processing row ${row.id}:`, error instanceof Error ? error.message : error)
         }
       })
 
@@ -578,7 +578,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const startTime = Date.now()
   try {
-    let body = {}
+    let body: any = {}
     try {
       const text = await request.text()
       if (text.trim()) {
@@ -638,7 +638,7 @@ export async function POST(request: NextRequest) {
 
 
     // 強制リフレッシュの処理
-    if (body.forceRefresh) {
+    if (body?.forceRefresh) {
       console.log('🔄 Force refreshing cache...')
       CACHE_INITIALIZED = false
       await globalInitializeCache()

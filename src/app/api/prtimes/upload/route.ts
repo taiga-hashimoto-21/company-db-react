@@ -73,7 +73,8 @@ async function updateCategories(client: any, categoryType: string, categoryName:
     `, [categoryType, categoryName.trim()])
   } catch (error) {
     // 重複エラーは無視
-    if (!error.message.includes('duplicate key')) {
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    if (!errorMessage.includes('duplicate key')) {
       console.error(`Error updating category ${categoryType}:`, error)
     }
   }

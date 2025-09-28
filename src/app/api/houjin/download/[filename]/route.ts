@@ -5,10 +5,10 @@ import path from 'path'
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { filename: string } }
+  { params }: { params: Promise<{ filename: string }> }
 ) {
   try {
-    const { filename } = params
+    const { filename } = await params
     
     if (!filename || !filename.endsWith('.csv')) {
       return NextResponse.json(
@@ -36,7 +36,7 @@ export async function GET(
 
     const fileContent = await readFile(filePath)
     
-    return new NextResponse(fileContent, {
+    return new NextResponse(fileContent as BodyInit, {
       status: 200,
       headers: {
         'Content-Type': 'text/csv; charset=utf-8',

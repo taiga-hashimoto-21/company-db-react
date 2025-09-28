@@ -376,7 +376,7 @@ export default function AdminPRTimesPage() {
 
     } catch (error) {
       console.error('Upload error:', error)
-      showNotification(`アップロードに失敗しました: ${error.message}`)
+      showNotification(`アップロードに失敗しました: ${error instanceof Error ? error.message : error}`)
     } finally {
       setUploading(false)
       // エラー時はプログレスバーとファイル名をクリア

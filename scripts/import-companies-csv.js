@@ -100,7 +100,7 @@ async function createCompaniesTable() {
 }
 
 async function importCSVData() {
-  const csvPath = path.join(__dirname, '../◯IT_1.csv')
+  const csvPath = path.join(__dirname, '../data/◯IT_1.csv')
   const client = await pool.connect()
 
   try {

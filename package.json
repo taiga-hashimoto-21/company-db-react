@@ -12,7 +12,8 @@
     "db:seed:large": "node scripts/seed-database.js 1000000",
     "db:seed:full": "node scripts/seed-database.js 12000000",
     "db:migrate:prtimes": "node scripts/migrate-prtimes.js",
-    "db:import:prtimes": "node scripts/bulk-import-prtimes.js"
+    "db:import:prtimes": "node scripts/bulk-import-prtimes.js",
+    "db:import:companies": "node scripts/import-companies-csv.js"
   },
   "dependencies": {
     "@supabase/auth-ui-react": "^0.4.7",
@@ -24,6 +25,7 @@
     "bcrypt": "^6.0.0",
     "cheerio": "^1.1.2",
     "clsx": "^2.1.1",
+    "csv-parser": "^3.2.0",
     "dotenv": "^17.2.2",
     "lucide-react": "^0.542.0",
     "meilisearch": "^0.53.0",

@@ -12,10 +12,6 @@ export default function Home() {
   const { user, logout } = useAuth()
   const router = useRouter()
   const [companies, setCompanies] = useState<Company[]>([])
-  const [tableCompanies, setTableCompanies] = useState<Company[]>([])
-  const [tablePage, setTablePage] = useState(1)
-  const [hasMoreTableData, setHasMoreTableData] = useState(true)
-  const [tableLoading, setTableLoading] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>('')
   const [currentFilters, setCurrentFilters] = useState<CompanySearchFilters>({})
@@ -76,7 +72,7 @@ export default function Home() {
   }, [])
 
   // 企業検索（全件取得）
-  const searchCompanies = useCallback(async (filters: CompanySearchFilters, countOnly: boolean = false, page: number = 1) => {
+  const searchCompanies = useCallback(async (filters: CompanySearchFilters, countOnly: boolean = false) => {
     // 件数のみの場合はgetCountを呼び出す
     if (countOnly) {
       getCount(filters)
@@ -87,15 +83,12 @@ export default function Home() {
     setLoading(true)
     setError('')
     setCopyFormat('url')
-    setTableCompanies([])
-    setTablePage(1)
-    setHasMoreTableData(true)
     setCompanies([]) // textareaの内容をリセット
 
     try {
       const searchParams = {
         ...filters,
-        page
+        exportAll: true // 全件取得
       }
 
       const response = await fetch('/api/companies/search', {
@@ -125,49 +118,7 @@ export default function Home() {
     } finally {
       setLoading(false)
     }
-
-    loadTableData(filters, 1)
   }, [getCount])
-
-  // テーブル用データの読み込み（50件ずつ）
-  const loadTableData = useCallback(async (filters: CompanySearchFilters, page: number, append: boolean = false) => {
-    if (!append) setTableLoading(true)
-
-    try {
-      const searchParams = {
-        ...filters,
-        page,
-        tableOnly: true
-      }
-
-      const response = await fetch('/api/companies/search', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(searchParams)
-      })
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
-
-      const data: CompanySearchResponse = await response.json()
-
-      if (append) {
-        setTableCompanies(prev => [...prev, ...data.companies])
-      } else {
-        setTableCompanies(data.companies)
-      }
-
-      setHasMoreTableData(data.pagination.hasNextPage)
-
-    } catch (error) {
-      console.error('Table data loading error:', error)
-    } finally {
-      setTableLoading(false)
-    }
-  }, [])
 
   // 初回は自動検索せず、ユーザーの検索操作を待つ
 
@@ -185,26 +136,8 @@ export default function Home() {
     }, hideDelay)
   }, [])
 
-  const loadMoreRef = useCallback((node: HTMLDivElement) => {
-    if (tableLoading) return
-
-    const observer = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting && hasMoreTableData && !tableLoading) {
-        const nextPage = tablePage + 1
-        setTablePage(nextPage)
-        loadTableData(currentFilters, nextPage, true)
-      }
-    })
-
-    if (node) observer.observe(node)
-
-    return () => {
-      if (node) observer.unobserve(node)
-    }
-  }, [tableLoading, hasMoreTableData, tablePage, currentFilters, loadTableData])
-
   const handleSearch = useCallback((filters: CompanySearchFilters, countOnly?: boolean) => {
-    searchCompanies(filters, countOnly, 1)
+    searchCompanies(filters, countOnly)
   }, [searchCompanies])
 
 
@@ -457,6 +390,7 @@ export default function Home() {
             </div>
           </div>
         </div>
+
       </main>
     </div>
   )

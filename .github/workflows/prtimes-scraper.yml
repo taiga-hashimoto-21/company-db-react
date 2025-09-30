@@ -9,7 +9,7 @@ on:
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 60 # 最大1時間
+    timeout-minutes: 360 # 最大6時間
 
     steps:
       - name: Checkout repository

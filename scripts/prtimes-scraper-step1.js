@@ -2,11 +2,19 @@ const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
 
-// ===== 本番用コード（昨日の日付を取得）=====
-const today = new Date();
-const yesterday = new Date(today);
-yesterday.setDate(today.getDate() - 1);
-const TARGET_DATE = yesterday.toISOString().split('T')[0]; // YYYY-MM-DD形式
+// ===== 本番用コード（日本時間で昨日の日付を取得）=====
+const now = new Date();
+const jstOffset = 9 * 60 * 60 * 1000; // 9時間をミリ秒に変換
+
+// 日本時間で昨日 = (現在のUTC時刻 + 9時間) - 24時間
+const jstYesterdayTime = now.getTime() + jstOffset - (24 * 60 * 60 * 1000);
+const jstYesterday = new Date(jstYesterdayTime);
+
+// YYYY-MM-DD形式で取得（getUTC*を使用）
+const year = jstYesterday.getUTCFullYear();
+const month = String(jstYesterday.getUTCMonth() + 1).padStart(2, '0');
+const day = String(jstYesterday.getUTCDate()).padStart(2, '0');
+const TARGET_DATE = `${year}-${month}-${day}`;
 
 // CSV出力先パス（macのDesktop）
 const CSV_OUTPUT_PATH = '/Users/hashimototaiga/Desktop/step1_results.csv';

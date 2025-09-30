@@ -25,16 +25,18 @@ node scripts/bulk-import-prtimes-fast.js --file data_prtimes/data1.csv --dry-run
 
 #### 本番環境
 ```bash
+# 前提: .env ファイルに DATABASE_URL を設定しておく
+
 # 1. 本番DBのデータを削除
-DATABASE_URL='postgresql://neondb_owner:npg_v9JFPG5AeKqy@ep-dark-shape-a1dxhsbk-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require' npm run db:clear:prtimes:production
+npm run db:clear:prtimes:production
 
 # 2. 本番DBに新しいCSVをインポート
-DATABASE_URL='postgresql://neondb_owner:npg_v9JFPG5AeKqy@ep-dark-shape-a1dxhsbk-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require' npm run db:import:prtimes:production --file data_prtimes/data1.csv --replace
+npm run db:import:prtimes:production --file data_prtimes/data1.csv --replace
 ```
 
 #### ワンライナー（削除+インポート）
 ```bash
-DATABASE_URL='postgresql://neondb_owner:npg_v9JFPG5AeKqy@ep-dark-shape-a1dxhsbk-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require' npm run db:clear:prtimes:production && DATABASE_URL='postgresql://neondb_owner:npg_v9JFPG5AeKqy@ep-dark-shape-a1dxhsbk-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require' npm run db:import:prtimes:production --file data_prtimes/data1.csv --replace
+npm run db:clear:prtimes:production && npm run db:import:prtimes:production --file data_prtimes/data1.csv --replace
 ```
 
 ## CSVフォーマット

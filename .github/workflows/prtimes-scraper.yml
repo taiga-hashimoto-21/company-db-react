@@ -1,0 +1,50 @@
+name: PR TIMES Daily Scraper
+
+on:
+  schedule:
+    # 毎日15:30 UTC = 日本時間 0:30 (JST = UTC+9)
+    - cron: '30 15 * * *'
+  workflow_dispatch: # 手動実行も可能にする
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60 # 最大1時間
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium for Puppeteer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            chromium-browser \
+            fonts-ipafont-gothic \
+            fonts-wqy-zenhei \
+            fonts-thai-tlwg \
+            fonts-kacst \
+            fonts-freefont-ttf \
+            libxss1 \
+            --no-install-recommends
+
+      - name: Run PR TIMES Scraper
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium-browser
+        run: node scripts/prtimes-scraper-integrated.js
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "❌ PR TIMES scraping failed!"
+          echo "Check the logs for details."

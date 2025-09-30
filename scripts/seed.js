@@ -8,12 +8,22 @@ const pool = new Pool({
 
 async function seed() {
   const client = await pool.connect()
-  
+
   try {
     console.log('Starting database seeding...')
-    
+
+    // セキュリティ対策: 環境変数で明示的に有効化しない限りadminアカウントは作成しない
+    if (process.env.ENABLE_ADMIN_SEED !== 'true') {
+      console.log('⚠️  Admin account creation is disabled for security.')
+      console.log('⚠️  To enable, set ENABLE_ADMIN_SEED=true in your environment.')
+      console.log('⚠️  For production, please create admin accounts manually with secure credentials.')
+      return
+    }
+
     // デフォルト管理者ユーザーの作成
-    const hashedPassword = await bcrypt.hash('admin123', 10)
+    // 環境変数から読み込む（未設定の場合はデフォルト値）
+    const adminPassword = process.env.ADMIN_PASSWORD || 'admin123'
+    const hashedPassword = await bcrypt.hash(adminPassword, 10)
     
     // ユーザーが既に存在するかチェック
     const existingUser = await client.query(
@@ -53,7 +63,7 @@ async function seed() {
     }
     
     console.log('Database seeding completed!')
-    console.log('Admin credentials: admin / admin123')
+    console.log('Admin credentials: admin / [ADMIN_PASSWORD from env or default]')
     
   } catch (error) {
     console.error('Error seeding database:', error)

@@ -40,3 +40,8 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 data.ms/
+
+# CSV data files (contain sensitive company information)
+data/*.csv
+data_prtimes/*.csv
+import-log.txt

@@ -2,8 +2,11 @@ const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
 
-// ターゲット日付の設定
-const TARGET_DATE = '2025-09-29';
+// ===== 本番用コード（昨日の日付を取得）=====
+const today = new Date();
+const yesterday = new Date(today);
+yesterday.setDate(today.getDate() - 1);
+const TARGET_DATE = yesterday.toISOString().split('T')[0]; // YYYY-MM-DD形式
 
 // CSV出力先パス（macのDesktop）
 const CSV_OUTPUT_PATH = '/Users/hashimototaiga/Desktop/step1_results.csv';
@@ -20,8 +23,8 @@ async function scrapePRTimesStep1() {
 
   try {
     // Puppeteerブラウザを起動
-    browser = await puppeteer.launch({
-      headless: false, // デバッグ用にブラウザを表示
+    const launchOptions = {
+      headless: 'new', // ヘッドレスモード（本番環境用）
       slowMo: 100, // 操作を少し遅くしてデバッグしやすくする
       args: [
         '--disable-web-security',
@@ -56,7 +59,14 @@ async function scrapePRTimesStep1() {
         '--allow-running-insecure-content',
         '--disable-component-update'
       ]
-    });
+    };
+
+    // GitHub ActionsなどでChromiumのパスを指定する場合
+    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+      launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+    }
+
+    browser = await puppeteer.launch(launchOptions);
 
     const page = await browser.newPage();
 
@@ -83,9 +93,10 @@ async function scrapePRTimesStep1() {
     console.log('📄 PRタイムズ新着記事ページにアクセス中...');
     await page.goto(PRTIMES_BASE_URL, { waitUntil: 'networkidle2' });
 
-    // 最初に50回「もっと見る」ボタンをクリックして過去の記事まで遡る
+    // ===== 本番用コード（50回クリック）=====
     console.log('⏳ 過去の記事を読み込むため、最初に50回「もっと見る」をクリック中...');
     await clickMoreButtonMultipleTimes(page, 0);
+
 
     let pageCount = 0;
     let foundTargetDate = false;
@@ -105,7 +116,7 @@ async function scrapePRTimesStep1() {
       const currentTotalLinks = await page.$$eval('a[href*="/main/html/rd/p/"]', links => links.length);
       processedLinkCount = currentTotalLinks;
 
-      // ターゲット日付より古い記事が見つかったかチェック
+      // ===== 本番用コード（ターゲット日付より古い記事まで遡る）=====
       const olderArticleInfo = await checkForOlderArticles(page, TARGET_DATE);
       if (olderArticleInfo.found) {
         console.log(`⏹️  ${TARGET_DATE}より古い記事が見つかりました。処理を終了します。`);
@@ -195,11 +206,12 @@ async function scrapePRTimesStep1() {
 
     console.log(`🎉 抽出完了！合計 ${results.length} 件の記事を取得しました`);
 
-    // CSVファイルに出力
-    await saveToCSV(results);
+    // データ配列を返す（CSVファイルには保存しない）
+    return results;
 
   } catch (error) {
     console.error('❌ エラーが発生しました:', error);
+    return [];
   } finally {
     if (browser) {
       await browser.close();
@@ -537,8 +549,8 @@ async function saveToCSV(results) {
     return;
   }
 
-  // CSVヘッダー
-  const csvHeader = 'リンク,配信日時,会社名,タイトル\n';
+  // CSVヘッダー（18列）
+  const csvHeader = '配信日時,プレスリリースURL,プレスリリースタイトル,プレスリリース種類,プレスリリースカテゴリ1,プレスリリースカテゴリ2,会社名,会社URL,業種,住所,電話番号,代表者,上場区分,資本金,設立日,資本金（万円）,設立年,設立月\n';
 
   // CSVデータ行
   const csvData = results.map(result => {
@@ -550,11 +562,28 @@ async function saveToCSV(results) {
       return str;
     };
 
+    // 配信日時のフォーマット変換（ISO形式 → YYYY/MM/DD HH:MM:SS）
+    let formattedDatetime = result.datetime;
+    try {
+      const date = new Date(result.datetime);
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      const seconds = String(date.getSeconds()).padStart(2, '0');
+      formattedDatetime = `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
+    } catch (error) {
+      // パースエラーの場合はそのまま使用
+      console.warn('日付フォーマット変換エラー:', result.datetime);
+    }
+
     return [
-      escapeCsv(result.link),
-      escapeCsv(result.datetime),
-      escapeCsv(result.companyName),
-      escapeCsv(result.title)
+      escapeCsv(formattedDatetime),         // 1列目: 配信日時
+      escapeCsv(result.link),               // 2列目: プレスリリースURL
+      escapeCsv(result.title),              // 3列目: プレスリリースタイトル
+      '', '', '', '', '', '',               // 4~9列目: 空白（プレスリリース種類~業種）
+      '', '', '', '', '', '', '', ''        // 10~18列目: 空白（住所~設立月）
     ].join(',');
   }).join('\n');
 

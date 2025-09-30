@@ -59,16 +59,6 @@ export function Header({ title, user, onLogout, children }: HeaderProps) {
                 >
                   DB管理
                 </Link>
-                <Link 
-                  href="/admin/prtimes"
-                  className={`text-sm font-medium text-black transition-colors relative ${
-                    pathname === '/admin/prtimes' 
-                      ? 'after:content-[""] after:absolute after:bottom-[-8px] after:left-0 after:right-0 after:h-0.5 after:bg-[var(--primary)]' 
-                      : 'hover:text-[var(--primary)]'
-                  }`}
-                >
-                  PRTIMES管理
-                </Link>
               </nav>
               
               {/* ログアウトボタン */}

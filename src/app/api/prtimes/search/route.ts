@@ -26,10 +26,10 @@ async function updateStatsCache() {
     try {
       const [industriesResult, pressTypesResult, listingResult] = await Promise.all([
         client.query(`
-          SELECT DISTINCT business_category
+          SELECT DISTINCT industry
           FROM prtimes_companies
-          WHERE business_category IS NOT NULL AND business_category != ''
-          ORDER BY business_category
+          WHERE industry IS NOT NULL AND industry != ''
+          ORDER BY industry
         `),
         client.query(`
           SELECT DISTINCT press_release_type
@@ -46,7 +46,7 @@ async function updateStatsCache() {
       ])
 
       STATS_CACHE = {
-        industries: industriesResult.rows.map(row => row.business_category),
+        industries: industriesResult.rows.map(row => row.industry),
         pressTypes: pressTypesResult.rows.map(row => row.press_release_type),
         listingStatuses: listingResult.rows.map(row => row.listing_status),
         lastUpdated: Date.now()
@@ -112,7 +112,7 @@ async function performDatabaseSearch(searchParams: any, startTime: number) {
     }
 
     if (industry && industry.length > 0) {
-      conditions.push(`(business_category = ANY($${paramIndex}) OR industry_category = ANY($${paramIndex}))`)
+      conditions.push(`industry = ANY($${paramIndex})`)
       params.push(industry)
       paramIndex++
     }
@@ -269,9 +269,9 @@ async function performDatabaseSearch(searchParams: any, startTime: number) {
         pressReleaseCategory2: row.press_release_category2,
         companyName: row.company_name,
         companyWebsite: row.company_website,
-        businessCategory: row.business_category,
-        industryCategory: row.industry_category,
-        industry: row.business_category || row.industry_category,
+        industry: row.industry,
+        businessCategory: row.industry,
+        industryCategory: undefined,
         address: row.address,
         phoneNumber: row.phone_number,
         representative: row.representative,

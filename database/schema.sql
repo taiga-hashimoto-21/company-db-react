@@ -135,6 +135,7 @@ CREATE TABLE prtimes_companies (
   delivery_date TIMESTAMP WITH TIME ZONE NOT NULL,
   press_release_url VARCHAR(1000) NOT NULL,
   press_release_title TEXT NOT NULL,
+  press_release_type VARCHAR(100),
   press_release_category1 VARCHAR(100),
   press_release_category2 VARCHAR(100),
   company_name VARCHAR(255) NOT NULL,
@@ -161,6 +162,7 @@ CREATE INDEX idx_prtimes_established_year ON prtimes_companies(established_year)
 CREATE INDEX idx_prtimes_established_month ON prtimes_companies(established_month);
 CREATE INDEX idx_prtimes_delivery_date ON prtimes_companies(delivery_date);
 CREATE INDEX idx_prtimes_listing_status ON prtimes_companies(listing_status);
+CREATE INDEX idx_prtimes_press_type ON prtimes_companies(press_release_type);
 CREATE INDEX idx_prtimes_press_category1 ON prtimes_companies(press_release_category1);
 CREATE INDEX idx_prtimes_press_category2 ON prtimes_companies(press_release_category2);
 

@@ -15,7 +15,9 @@
     "db:import:prtimes": "node scripts/bulk-import-prtimes.js",
     "db:import:companies": "node scripts/import-companies-csv.js",
     "db:import:companies:production": "NODE_ENV=production node scripts/import-companies-production.js",
-    "db:import:companies:fast": "node scripts/import-companies-production.js"
+    "db:import:companies:fast": "node scripts/import-companies-production.js",
+    "db:import:prtimes:production": "NODE_ENV=production node scripts/bulk-import-prtimes-fast.js",
+    "db:clear:prtimes:production": "NODE_ENV=production node scripts/clear-prtimes-production.js"
   },
   "dependencies": {
     "@supabase/auth-ui-react": "^0.4.7",
@@ -27,6 +29,7 @@
     "bcrypt": "^6.0.0",
     "cheerio": "^1.1.2",
     "clsx": "^2.1.1",
+    "commander": "^14.0.1",
     "csv-parser": "^3.2.0",
     "dotenv": "^17.2.2",
     "lucide-react": "^0.542.0",
@@ -34,6 +37,7 @@
     "next": "15.5.0",
     "pg": "^8.16.3",
     "pg-copy-streams": "^7.0.0",
+    "puppeteer": "^24.22.3",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-hot-toast": "^2.6.0",

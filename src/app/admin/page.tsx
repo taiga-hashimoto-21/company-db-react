@@ -1,190 +1,423 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { Header } from '@/components/ui/Header'
-import { Pagination } from '@/components/ui/Pagination'
-import { AdvancedSearch, SearchFilters } from '@/components/ui/AdvancedSearch'
-import { Corporate, CorporateSearchResponse, PaginationInfo } from '@/types/corporate'
+import { Input } from '@/components/ui/Input'
+import { PRTimesCompany } from '@/types/prtimes'
 import { useAuth } from '@/contexts/AuthContext'
-import { formatResponseTime, formatNumber, logPerformance } from '@/lib/utils'
+import { formatNumber } from '@/lib/utils'
 
 export default function AdminPage() {
   const { user, logout } = useAuth()
   const router = useRouter()
-  const [companies, setCompanies] = useState<Corporate[]>([])
-  const [pagination, setPagination] = useState<PaginationInfo>({
-    currentPage: 1,
-    totalPages: 1,
-    totalCount: 0,
-    hasNextPage: false,
-    hasPrevPage: false
-  })
+  const [companies, setCompanies] = useState<PRTimesCompany[]>([])
+  const [allCompanies, setAllCompanies] = useState<PRTimesCompany[]>([])
+  const [adminPage, setAdminPage] = useState(1)
+  const [hasMoreAdminData, setHasMoreAdminData] = useState(true)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string>('')
-  const [responseTime, setResponseTime] = useState<number>(0)
-  const [cacheStatus, setCacheStatus] = useState<'hit' | 'miss' | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [uploadResult, setUploadResult] = useState<{
+    message: string
+    successCount: number
+    errorCount: number
+    errors: string[]
+  } | null>(null)
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [totalCount, setTotalCount] = useState(0) // 重複除去前の全件数
+  const [uniqueCount, setUniqueCount] = useState(0) // 重複除去後のユニーク件数
+  const [uploads, setUploads] = useState<any[]>([])
+  const [uploadsLoading, setUploadsLoading] = useState(false)
+  const [notification, setNotification] = useState<{message: string, visible: boolean}>({
+    message: '',
+    visible: false
+  })
+  const [uploadProgress, setUploadProgress] = useState<{
+    show: boolean
+    processed: number
+    total: number
+    errors: number
+    fileName: string
+  }>({
+    show: false,
+    processed: 0,
+    total: 0,
+    errors: 0,
+    fileName: ''
+  })
 
-  // 管理者権限チェック
-  useEffect(() => {
-    if (!user) {
-      router.push('/login')
-    } else if (user.type !== 'admin') {
-      router.push('/search') // 一般ユーザーは検索画面へリダイレクト
-    }
-  }, [user, router])
+  // ローディング中は何もしない
+  const [isPageLoading, setIsPageLoading] = useState(true)
 
-  // 高パフォーマンス検索API呼び出し関数（管理者向け全フィールド表示）
-  const searchCompanies = useCallback(async (filters: SearchFilters, page: number = 1) => {
-    const startTime = Date.now()
-    setLoading(true)
-    setError('')
-    setResponseTime(0)
-    setCacheStatus(null)
+  const showNotification = useCallback((message: string) => {
+    setNotification({ message, visible: true })
     
+    // 5秒後に非表示
+    setTimeout(() => {
+      setNotification(prev => ({ ...prev, visible: false }))
+    }, 5000)
+  }, [])
+
+  useEffect(() => {
+    // 初期化を待つ
+    const timer = setTimeout(() => {
+      setIsPageLoading(false)
+    }, 100)
+    
+    return () => clearTimeout(timer)
+  }, [])
+
+  useEffect(() => {
+    if (!isPageLoading) {
+      if (!user) {
+        router.push('/login')
+      } else if (user.type !== 'admin') {
+        router.push('/prtimes')
+      }
+    }
+  }, [user, router, isPageLoading])
+
+  const loadAllAdminData = useCallback(async () => {
+    setLoading(true)
+
     try {
-      // 検索条件の構築
-      const searchParams: any = {
-        page,
-        limit: 100
-      }
+      // 検索APIとデータベースAPIを並列で実行
+      const [searchResponse, dbResponse] = await Promise.all([
+        fetch('/api/prtimes/search', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ exportAll: true })
+        }),
+        fetch('/api/prtimes/search', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ countOnly: true })
+        }) // 件数のみ取得
+      ])
 
-      // 業界（複数選択対応）
-      if (filters.industries && filters.industries.length > 0) {
-        searchParams.industries = filters.industries
-      }
+      if (!searchResponse.ok) throw new Error('Failed to fetch companies')
+      if (!dbResponse.ok) throw new Error('Failed to fetch counts')
 
-      // 都道府県
-      if (filters.prefecture && filters.prefecture !== '指定なし') {
-        searchParams.prefectures = [filters.prefecture]
-      }
+      const searchData = await searchResponse.json()
+      const dbData = await dbResponse.json()
 
-      // 資本金（指定なしでない場合）
-      if (!filters.capitalEnabled && (filters.capitalMin || filters.capitalMax)) {
-        if (filters.capitalMin) searchParams.capitalMin = filters.capitalMin
-        if (filters.capitalMax) searchParams.capitalMax = filters.capitalMax
-      }
-
-      // 従業員数（指定なしでない場合）
-      if (!filters.employeesEnabled && (filters.employeesMin || filters.employeesMax)) {
-        if (filters.employeesMin) searchParams.employeesMin = filters.employeesMin
-        if (filters.employeesMax) searchParams.employeesMax = filters.employeesMax
-      }
-
-      // 設立年（指定なしでない場合）
-      if (!filters.establishedYearEnabled && (filters.establishedYearMin || filters.establishedYearMax)) {
-        if (filters.establishedYearMin) searchParams.establishedYearMin = filters.establishedYearMin
-        if (filters.establishedYearMax) searchParams.establishedYearMax = filters.establishedYearMax
-      }
-      
-      const response = await fetch('/api/companies/search', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(searchParams)
-      })
-      
-      if (!response.ok) {
-        throw new Error(`検索に失敗しました (${response.status})`)
-      }
-      
-      const data: CorporateSearchResponse & {
-        _responseTime?: number
-        _cache?: 'hit' | 'miss'
-        _queryInfo?: any
-      } = await response.json()
-      
-      setCompanies(data.companies)
-      setPagination(data.pagination)
-      
-      // パフォーマンス情報の表示
-      if (data._responseTime) {
-        setResponseTime(data._responseTime)
-        setCacheStatus(data._cache || null)
-        logPerformance(
-          `Admin Company Search (page ${page})`,
-          startTime,
-          {
-            totalResults: data.pagination.totalCount,
-            cacheStatus: data._cache,
-            serverTime: data._responseTime,
-            clientTime: Date.now() - startTime,
-            filters: JSON.stringify(filters)
-          }
-        )
-      }
-      
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : '検索中にエラーが発生しました'
-      setError(errorMessage)
-      setCompanies([])
-      setPagination({
-        currentPage: 1,
-        totalPages: 1,
-        totalCount: 0,
-        hasNextPage: false,
-        hasPrevPage: false
-      })
-      
-      logPerformance('Admin Company Search Error', startTime, { error: errorMessage })
-      
+      setAllCompanies(searchData.companies)
+      // fast-search APIから件数を取得
+      setTotalCount(searchData.pagination.totalRawCount || searchData.pagination.totalCount) // 重複除去前の全件数
+      setUniqueCount(searchData.pagination.totalCount) // 重複除去後のユニーク企業数
+      setHasMoreAdminData(false) // 全データ取得済み
+    } catch (error) {
+      console.error('Error fetching companies:', error)
     } finally {
       setLoading(false)
     }
   }, [])
 
-  // 初回検索（全件表示）
+  const loadAdminData = useCallback(async (page: number, append: boolean = false) => {
+    if (!append) setLoading(true)
+    
+    try {
+      const response = await fetch('/api/prtimes/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ page, tableOnly: true })
+      })
+      if (!response.ok) throw new Error('Failed to fetch companies')
+      
+      const data = await response.json()
+      
+      if (append) {
+        setAllCompanies(prev => [...prev, ...data.companies])
+      } else {
+        setAllCompanies(data.companies)
+      }
+      
+      setTotalCount(data.pagination.totalRawCount || data.pagination.totalCount) // 重複除去前の全件数
+      setUniqueCount(data.pagination.totalCount) // 重複除去後のユニーク企業数
+      setHasMoreAdminData(data.pagination.hasNextPage)
+    } catch (error) {
+      console.error('Error fetching companies:', error)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  // ドメイン抽出関数
+  const extractDomain = useCallback((url: string | null | undefined): string | null => {
+    if (!url || !url.trim()) return null
+    try {
+      const cleanUrl = url.trim()
+      // httpまたはhttpsで始まらない場合は追加
+      const fullUrl = cleanUrl.match(/^https?:\/\//) ? cleanUrl : `https://${cleanUrl}`
+      const domain = new URL(fullUrl).hostname.toLowerCase()
+      // www.を除去
+      return domain.replace(/^www\./, '')
+    } catch {
+      return null
+    }
+  }, [])
+
+  // 会社名正規化関数
+  const normalizeCompanyName = useCallback((name: string | null | undefined): string => {
+    if (!name || !name.trim()) return 'no-name'
+    return name.trim()
+      .toLowerCase()
+      .replace(/株式会社|（株）|\(株\)|有限会社|合同会社|co\.,ltd\.|ltd\.|inc\.|corp\./g, '')
+      .replace(/\s+/g, '')
+  }, [])
+
+  // 管理者画面用データの生成（検索APIで既にユニーク化済み）
+  const displayCompanies = useMemo(() => {
+    // 検索APIで既にDISTINCT ON (company_name, company_website)済みなので
+    // フロントエンドでの重複除去は不要、ソートのみ
+    return allCompanies
+      .map(company => ({ ...company, pressReleaseCount: 1 }))
+      .sort((a, b) => {
+        const nameA = a.companyName || ''
+        const nameB = b.companyName || ''
+        return nameA.localeCompare(nameB)
+      })
+  }, [allCompanies])
+
+  const fetchUploads = useCallback(async () => {
+    setUploadsLoading(true)
+    try {
+      const response = await fetch('/api/prtimes/uploads')
+      if (!response.ok) throw new Error('Failed to fetch uploads')
+      
+      const data = await response.json()
+      setUploads(data.uploads)
+    } catch (error) {
+      console.error('Error fetching uploads:', error)
+    } finally {
+      setUploadsLoading(false)
+    }
+  }, [])
+
+  const monitorUploadProgress = useCallback(async (batchId: string) => {
+    console.log('🔄 Progress monitoring started for batchId:', batchId)
+    
+    const checkProgress = async () => {
+      try {
+        console.log('📡 Fetching progress for:', batchId)
+        const response = await fetch(`/api/prtimes/progress/${batchId}`)
+        console.log('📡 Response status:', response.status)
+        
+        if (!response.ok) {
+          console.error('❌ Progress API error:', response.status)
+          return
+        }
+        
+        const progress = await response.json()
+        console.log('📊 Progress data:', progress)
+        
+        setUploadProgress(prev => ({
+          ...prev,
+          processed: progress.processed,
+          total: progress.total,
+          errors: progress.errors,
+          fileName: prev.fileName // ファイル名を保持
+        }))
+        
+        // まだ処理中なら続行（より頻繁にチェック）
+        if (progress.status === 'processing' || progress.processed < progress.total) {
+          setTimeout(checkProgress, 300) // 0.3秒後に再チェック（より高速）
+        } else {
+          // 完了時の処理
+          console.log('✅ Upload completed!')
+          const successCount = progress.success || 0
+          const errorCount = progress.errors || 0
+          
+          // 完了通知
+          if (successCount > 0) {
+            showNotification(`アップロード完了: 成功 ${successCount}件${errorCount > 0 ? `, エラー ${errorCount}件` : ''}`)
+          } else {
+            showNotification(`アップロード失敗: エラー ${errorCount}件`)
+          }
+          
+          // データ再読み込み
+          if (successCount > 0) {
+            // キャッシュ更新完了を待ってからデータを再取得
+            setTimeout(async () => {
+              await loadAllAdminData()
+              await fetchUploads()
+            }, 2000) // 2秒待ってからデータ再取得
+          }
+          
+          setTimeout(() => {
+            setUploadProgress(prev => ({ ...prev, show: false, fileName: '' }))
+          }, 3000) // 3秒後にプログレスバーを非表示
+        }
+      } catch (error) {
+        console.error('Progress check error:', error)
+      }
+    }
+    
+    // 初回チェックを少し遅らせる
+    setTimeout(checkProgress, 500)
+  }, [fetchUploads])
+
   useEffect(() => {
     if (user && user.type === 'admin') {
-      const defaultFilters: SearchFilters = {
-        industries: [],
-        prefecture: '指定なし',
-        capitalMin: 0,
-        capitalMax: 0,
-        capitalEnabled: true,
-        employeesMin: 0,
-        employeesMax: 0,
-        employeesEnabled: true,
-        establishedYearMin: 0,
-        establishedYearMax: 0,
-        establishedYearEnabled: true,
-      }
-      searchCompanies(defaultFilters)
+      loadAllAdminData()
+      fetchUploads()
     }
-  }, [user, searchCompanies])
+  }, [user, loadAllAdminData, fetchUploads])
+
+  // 無限スクロール用のhook
+  const loadMoreRef = useCallback((node: HTMLDivElement) => {
+    if (loading) return
+    
+    const observer = new IntersectionObserver(entries => {
+      if (entries[0].isIntersecting && hasMoreAdminData && !loading) {
+        const nextPage = adminPage + 1
+        setAdminPage(nextPage)
+        loadAdminData(nextPage, true)
+      }
+    })
+    
+    if (node) observer.observe(node)
+    
+    return () => {
+      if (node) observer.unobserve(node)
+    }
+  }, [loading, hasMoreAdminData, adminPage, loadAdminData])
+
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (file && file.type === 'text/csv') {
+      setSelectedFile(file)
+      setUploadResult(null)
+    } else {
+      alert('CSVファイルを選択してください')
+      event.target.value = ''
+    }
+  }
+
+  const handleUpload = async () => {
+    if (!selectedFile) {
+      alert('ファイルを選択してください')
+      return
+    }
+
+    // アップロード中のファイル名を最初に保存（selectedFileがnullになる前に）
+    const fileName = selectedFile.name
+    const fileSize = selectedFile.size
+
+    setUploading(true)
+
+    // CSVの行数を事前に取得してプログレスバーの初期設定
+    const fileContent = await selectedFile.text()
+    const lines = fileContent.split('\n').filter(line => line.trim() !== '')
+    const totalRows = Math.max(0, lines.length - 2) // ヘッダーを除く
+
+    // ファイルサイズに基づいて処理方式を決定（10MB以上は高速API使用）
+    const useBulkUpload = fileSize > 10 * 1024 * 1024 // 10MB以上
+    const apiEndpoint = useBulkUpload ? '/api/prtimes/bulk-upload' : '/api/prtimes/upload'
+    const estimatedTime = useBulkUpload ? '2-5分' : '通常処理'
+
+    setUploadProgress({
+      show: true,
+      processed: 0,
+      total: totalRows,
+      errors: 0,
+      fileName: `${fileName} (${useBulkUpload ? '高速処理' : '通常処理'} - 予想時間: ${estimatedTime})`
+    })
+
+    // 高速処理の場合は事前通知
+    if (useBulkUpload) {
+      showNotification(`大容量ファイルのため高速処理(COPYコマンド)を使用します。予想時間: ${estimatedTime}`)
+    }
+
+    try {
+      const formData = new FormData()
+      formData.append('file', selectedFile)
+
+      const response = await fetch(apiEndpoint, {
+        method: 'POST',
+        body: formData
+      })
+
+      if (!response.ok) {
+        throw new Error(`Upload failed: ${response.status}`)
+      }
+
+      const result = await response.json()
+      console.log('📤 Upload started:', result)
+
+      // 高速処理の場合は追加情報を表示
+      if (useBulkUpload) {
+        console.log('⚡ Using bulk upload (COPY command)')
+        showNotification(`高速処理開始: ${result.method || 'COPY'}コマンドで処理中...`)
+      }
+
+      // アップロード開始後、進捗を監視
+      if (result.batchId) {
+        console.log('🎯 Starting progress monitoring for batchId:', result.batchId)
+        monitorUploadProgress(result.batchId)
+      } else {
+        console.error('❌ No batchId in upload result')
+      }
+
+      // 非同期処理のため、ここではファイル入力をクリアするのみ
+      setUploadResult(null)
+      setSelectedFile(null)
+
+      const fileInput = document.getElementById('csvFile') as HTMLInputElement
+      if (fileInput) fileInput.value = ''
+
+    } catch (error) {
+      console.error('Upload error:', error)
+      showNotification(`アップロードに失敗しました: ${error instanceof Error ? error.message : error}`)
+    } finally {
+      setUploading(false)
+      // エラー時はプログレスバーとファイル名をクリア
+      if (!uploadProgress.show) {
+        setUploadProgress(prev => ({ ...prev, fileName: '' }))
+      }
+    }
+  }
+
+  const handleDeleteUpload = async (batchId: string, filename: string) => {
+    if (!confirm(`「${filename}」のアップロードデータを削除してもよろしいですか？\nこのバッチのデータのみが削除されます。この操作は取り消せません。`)) {
+      return
+    }
+
+    try {
+      const response = await fetch(`/api/prtimes/uploads?batchId=${encodeURIComponent(batchId)}`, {
+        method: 'DELETE'
+      })
+      
+      if (!response.ok) {
+        throw new Error('Delete failed')
+      }
+      
+      const result = await response.json()
+      showNotification(`削除完了: ${result.deletedCompanies}件の企業データと履歴を削除しました`)
+      
+      await fetchUploads()
+      // 全データを再読み込み
+      await loadAllAdminData()
+    } catch (error) {
+      console.error('Delete error:', error)
+      showNotification('削除に失敗しました')
+    }
+  }
 
   const handleLogout = () => {
     logout()
     router.push('/login')
   }
 
-  const handleAdvancedSearch = useCallback((filters: SearchFilters) => {
-    searchCompanies(filters, 1)
-  }, [searchCompanies])
-  
-  const handlePageChange = (page: number) => {
-    // 現在の検索条件を維持してページ変更
-    const currentFilters: SearchFilters = {
-      industries: [],
-      prefecture: '指定なし',
-      capitalMin: 0,
-      capitalMax: 0,
-      capitalEnabled: true,
-      employeesMin: 0,
-      employeesMax: 0,
-      employeesEnabled: true,
-      establishedYearMin: 0,
-      establishedYearMax: 0,
-      establishedYearEnabled: true,
-    }
-    searchCompanies(currentFilters, page)
-  }
-
-  // 権限チェック中の表示
-  if (!user || user.type !== 'admin') {
+  if (isPageLoading || !user || user.type !== 'admin') {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-[var(--text-secondary)]">Loading...</div>
@@ -193,180 +426,311 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-[var(--bg-secondary)]">
       <Header 
-        title="企業データベース（管理者画面）"
+        title="管理画面"
         user={{ name: user.name, type: user.type }}
         onLogout={handleLogout}
       />
       
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* 高度な検索フォーム */}
-        <Card className="mb-8">
-          <CardHeader>
-            <CardTitle>企業検索（管理者向け・高度な絞り込み）</CardTitle>
-            <p className="text-sm text-[var(--text-secondary)] mt-2">
-              業界、所在地、資本金、従業員数、設立年で絞り込み検索ができます（全フィールド表示）
+      <main style={{ width: '1000px', margin: '0 auto', padding: '32px 24px' }} className="flex flex-col items-center">
+        
+        {/* ユーザー画面で確認ボタンを一番上に配置 */}
+        <div className="w-full flex justify-center" style={{ marginBottom: '30px' }}>
+          <button 
+            onClick={() => router.push('/prtimes')}
+            className="smarthr-button bg-[var(--primary)] text-white border-transparent hover:bg-[var(--primary-hover)]"
+            style={{ padding: '12px 24px', fontSize: '16px' }}
+          >
+            ユーザー画面で確認
+          </button>
+        </div>
+        <div className="smarthr-card w-full mb-8">
+          <div className="mb-6">
+            <h2 className="text-xl font-semibold text-[var(--text-primary)] mb-2">CSVファイルアップロード</h2>
+            <p className="text-sm text-[var(--text-secondary)] mb-3">
+              PR TIMESから取得した企業データをCSVファイルでアップロードできます
             </p>
-          </CardHeader>
-          <CardBody>
-            <AdvancedSearch 
-              onSearch={handleAdvancedSearch}
-              loading={loading}
-            />
-            <div className="flex gap-3 flex-wrap mt-6 pt-6 border-t border-[var(--border-color)]">
-              <Button variant="secondary" disabled={loading || companies.length === 0}>CSV出力</Button>
-              <Button variant="secondary" disabled={loading || companies.length === 0}>テキスト出力</Button>
-              <Button 
-                variant="primary" 
-                onClick={() => router.push('/admin/prtimes')}
-              >
-                PR TIMES管理
-              </Button>
-              <Button 
-                variant="primary" 
-                onClick={() => router.push('/admin/users')}
-              >
-                ユーザー管理
-              </Button>
-            </div>
-          </CardBody>
-        </Card>
-
-        {/* エラー表示 */}
-        {error && (
-          <Card className="mb-6">
-            <CardBody>
-              <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-                {error}
+            {/* <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <p className="text-sm text-blue-800">
+                <strong>🚀 高速処理について:</strong><br />
+                • 10MB未満: 通常処理（1行ずつ処理）<br />
+                • 10MB以上: 高速処理（COPYコマンド使用、約200倍高速）<br />
+                • 10万件のデータも約2-5分で完了します
+              </p>
+            </div> */}
+          </div>
+          <div>
+            <div className="space-y-4">
+              <div>
+                <label htmlFor="csvFile" className="block text-sm font-medium mb-2">
+                  CSVファイル選択
+                </label>
+                <div className="flex gap-3 items-center">
+                  <input
+                    id="csvFile"
+                    type="file"
+                    accept=".csv"
+                    onChange={handleFileSelect}
+                    disabled={uploading}
+                    className="smarthr-input flex-1 text-sm
+                      file:mr-4 file:py-2 file:px-4
+                      file:rounded-lg file:border-0
+                      file:text-sm file:font-medium
+                      file:bg-[var(--primary)] file:text-white
+                      hover:file:bg-[var(--primary-hover)]
+                      file:cursor-pointer cursor-pointer"
+                  />
+                  <button 
+                    onClick={handleUpload}
+                    disabled={!selectedFile || uploading}
+                    className="smarthr-button bg-[var(--primary)] text-white border-transparent hover:bg-[var(--primary-hover)] disabled:opacity-50"
+                  >
+                    {uploading ? 'アップロード中...' : 'アップロード'}
+                  </button>
+                </div>
               </div>
-            </CardBody>
-          </Card>
-        )}
-
-        {/* 検索結果 */}
-        <Card>
-          <CardHeader>
-            <div className="flex justify-between items-center">
-              <CardTitle>
-                検索結果 ({loading ? '検索中...' : `${formatNumber(pagination.totalCount)}件`})
-              </CardTitle>
-              {/* パフォーマンス情報 */}
-              {responseTime > 0 && !loading && (
-                <div className="flex items-center gap-4 text-sm text-[var(--text-secondary)]">
-                  <span>
-                    応答時間: <strong className={responseTime < 1000 ? 'text-green-600' : responseTime < 3000 ? 'text-yellow-600' : 'text-red-600'}>
-                      {formatResponseTime(responseTime)}
-                    </strong>
-                  </span>
-                  {cacheStatus && (
-                    <span className={`px-2 py-1 rounded text-xs ${
-                      cacheStatus === 'hit' 
-                        ? 'bg-green-100 text-green-800' 
-                        : 'bg-blue-100 text-blue-800'
-                    }`}>
-                      {cacheStatus === 'hit' ? 'キャッシュ' : 'DB検索'}
+              
+              {/* プログレスバー */}
+              {(uploading || uploadProgress.show) && (
+                <div className="mt-4">
+                  <div className="mb-2 flex justify-between text-sm">
+                    <span className="text-[var(--text-secondary)]">CSV処理中... ({uploadProgress.fileName})</span>
+                    <span className="text-[var(--text-primary)]">
+                      {uploadProgress.processed} / {uploadProgress.total} 件 ({Math.round((uploadProgress.processed / uploadProgress.total) * 100)}%)
                     </span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-lg h-3">
+                    <div 
+                      className="bg-[var(--primary)] h-3 rounded-lg transition-all duration-300 ease-out"
+                      style={{ 
+                        width: `${uploadProgress.total > 0 ? (uploadProgress.processed / uploadProgress.total) * 100 : 0}%` 
+                      }}
+                    ></div>
+                  </div>
+                  {uploadProgress.errors > 0 && (
+                    <div className="mt-2 text-sm text-red-600">
+                      エラー: {uploadProgress.errors} 件
+                    </div>
                   )}
                 </div>
               )}
             </div>
-          </CardHeader>
-          <CardBody>
-            <div className="overflow-x-auto">
-              <table className="w-full">
+          </div>
+        </div>
+
+        <div className="smarthr-card w-full mb-8">
+          <div className="mb-6">
+            <h2 className="text-xl font-semibold text-[var(--text-primary)] mb-2">アップロード履歴</h2>
+            <p className="text-sm text-[var(--text-secondary)]">
+              過去のCSVアップロード履歴を確認・削除できます。削除は該当バッチのデータのみが対象となります。
+            </p>
+          </div>
+          <div>
+            {/* 固定ヘッダー */}
+            <div style={{ border: '1px solid var(--border-color)', borderBottom: 'none', borderRadius: '6px 6px 0 0', backgroundColor: 'white' }}>
+              <table className="smarthr-table w-full" style={{ marginBottom: '0' }}>
                 <thead>
                   <tr className="border-b border-[var(--border-color)]">
-                    <th className="text-left py-3 px-4 font-medium text-[var(--text-primary)]">企業名</th>
-                    <th className="text-left py-3 px-4 font-medium text-[var(--text-primary)]">業種</th>
-                    <th className="text-left py-3 px-4 font-medium text-[var(--text-primary)]">都道府県</th>
-                    <th className="text-left py-3 px-4 font-medium text-[var(--text-primary)]">資本金</th>
-                    <th className="text-left py-3 px-4 font-medium text-[var(--text-primary)]">従業員数</th>
-                    <th className="text-left py-3 px-4 font-medium text-[var(--text-primary)]">設立年</th>
-                    <th className="text-left py-3 px-4 font-medium text-[var(--text-primary)]">ホームページURL</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '180px', minWidth: '180px', maxWidth: '180px' }}>アップロード日時</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '160px', minWidth: '160px', maxWidth: '160px' }}>ファイル名</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '80px', minWidth: '80px', maxWidth: '80px' }}>総件数</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '80px', minWidth: '80px', maxWidth: '80px' }}>成功</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '80px', minWidth: '80px', maxWidth: '80px' }}>エラー</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '90px', minWidth: '90px', maxWidth: '90px' }}>ステータス</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '80px', minWidth: '80px', maxWidth: '80px' }}>操作</th>
+                  </tr>
+                </thead>
+              </table>
+            </div>
+            
+            {/* スクロール可能なボディ */}
+            <div className="overflow-x-auto" style={{ maxHeight: '240px', overflowY: 'auto', border: '1px solid var(--border-color)', borderTop: 'none', borderRadius: '0 0 6px 6px' }}>
+              <table className="smarthr-table w-full" style={{ marginBottom: '0' }}>
+                <tbody>
+                  {uploadsLoading ? (
+                    Array.from({ length: 3 }).map((_, index) => (
+                      <tr key={`upload-loading-${index}`} className="border-b border-[var(--border-color)]">
+                        <td colSpan={7} className="py-4 px-4 text-center">
+                          <div className="animate-pulse bg-[var(--bg-light)] h-6 rounded"></div>
+                        </td>
+                      </tr>
+                    ))
+                  ) : uploads.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-8 px-4 text-center text-[var(--text-secondary)]">
+                        アップロード履歴がありません
+                      </td>
+                    </tr>
+                  ) : (
+                    uploads.map((upload) => (
+                      <tr key={upload.id} className="border-b border-[var(--border-color)] hover:bg-[var(--bg-secondary)]">
+                        <td className="py-4 px-4 text-sm text-left" style={{ width: '180px', minWidth: '180px', maxWidth: '180px' }}>
+                          <div className="truncate">
+                            {new Date(upload.uploadDate).toLocaleString('ja-JP', {
+                              year: 'numeric',
+                              month: '2-digit', 
+                              day: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </div>
+                        </td>
+                        <td className="py-4 px-4 font-medium text-left" style={{ width: '160px', minWidth: '160px', maxWidth: '160px' }}>
+                          <div className="truncate" title={upload.filename}>
+                            {upload.filename}
+                          </div>
+                        </td>
+                        <td className="py-4 px-4 text-sm text-left" style={{ width: '80px', minWidth: '80px', maxWidth: '80px' }}>
+                          <div className="truncate">
+                            {upload.totalRecords}
+                          </div>
+                        </td>
+                        <td className="py-4 px-4 text-sm text-left" style={{ width: '80px', minWidth: '80px', maxWidth: '80px' }}>
+                          <div className="truncate">
+                            <span className="text-green-600">{upload.successRecords || 0}</span>
+                          </div>
+                        </td>
+                        <td className="py-4 px-4 text-sm text-left" style={{ width: '80px', minWidth: '80px', maxWidth: '80px' }}>
+                          <div className="truncate">
+                            <span className="text-red-600">{upload.errorRecords || 0}</span>
+                          </div>
+                        </td>
+                        <td className="py-4 px-4 text-left" style={{ width: '90px', minWidth: '90px', maxWidth: '90px' }}>
+                          <span className={`px-2 py-1 rounded text-xs ${
+                            upload.status === 'completed' ? 'bg-green-100 text-green-800' :
+                            upload.status === 'partial' ? 'bg-yellow-100 text-yellow-800' :
+                            upload.status === 'failed' ? 'bg-red-100 text-red-800' :
+                            'bg-gray-100 text-gray-800'
+                          }`}>
+                            {upload.status === 'completed' ? '完了' :
+                             upload.status === 'partial' ? '部分完了' :
+                             upload.status === 'failed' ? '失敗' : '処理中'}
+                          </span>
+                        </td>
+                        <td className="py-4 px-4 text-left" style={{ width: '80px', minWidth: '80px', maxWidth: '80px' }}>
+                          <button
+                            onClick={() => handleDeleteUpload(upload.batchId, upload.filename)}
+                            style={{ padding: '3px 15px', height: '25px', fontSize: '12px' }}
+                            className="smarthr-button bg-red-500 text-white border-transparent hover:bg-red-600"
+                            title={`このアップロード（${upload.filename}）のデータのみを削除します`}
+                          >
+                            削除
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+
+        <div className="smarthr-card w-full">
+          <div className="mb-6">
+            <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-1">
+              登録済みデータ ({loading ? '読み込み中...' : `ユニーク企業${formatNumber(uniqueCount)}件 / 全${formatNumber(totalCount)}件`})
+            </h2>
+          </div>
+          <div>
+            <div className="overflow-x-auto">
+              <table className="smarthr-table w-full" style={{ tableLayout: 'fixed' }}>
+                <thead>
+                  <tr className="border-b border-[var(--border-color)]">
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '200px !important', minWidth: '200px', maxWidth: '200px' }}>会社名</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '200px !important', minWidth: '200px', maxWidth: '200px' }}>ホームページURL</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '140px !important', minWidth: '140px', maxWidth: '140px' }}>資本金</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '140px !important', minWidth: '140px', maxWidth: '140px' }}>設立年</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '140px !important', minWidth: '140px', maxWidth: '140px' }}>業種</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '140px !important', minWidth: '140px', maxWidth: '140px' }}>上場区分</th>
+                    <th className="text-left py-3 px-4 font-medium" style={{ width: '140px !important', minWidth: '140px', maxWidth: '140px' }}>代表者名</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {loading ? (
-                    // ローディング表示
-                    Array.from({ length: 10 }).map((_, index) => (
+                  {loading && displayCompanies.length === 0 ? (
+                    Array.from({ length: 5 }).map((_, index) => (
                       <tr key={`loading-${index}`} className="border-b border-[var(--border-color)]">
                         <td colSpan={7} className="py-4 px-4 text-center">
                           <div className="animate-pulse bg-[var(--bg-light)] h-6 rounded"></div>
                         </td>
                       </tr>
                     ))
-                  ) : companies.length === 0 ? (
-                    // データなし表示
+                  ) : displayCompanies.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="py-8 px-4 text-center text-[var(--text-secondary)]">
-                        検索条件に一致する企業が見つかりませんでした
+                        登録されているデータがありません
                       </td>
                     </tr>
                   ) : (
-                    // 検索結果表示（管理者向け全フィールド）
-                    companies.map((corporate) => (
-                    <tr key={corporate.id} className="border-b border-[var(--border-color)] hover:bg-[var(--bg-secondary)]">
-                      <td className="py-4 px-4">
-                        <div className="font-semibold text-[var(--text-primary)]">
-                          {corporate.companyName}
-                        </div>
-                      </td>
-                      <td className="py-4 px-4 text-[var(--text-primary)]">
-                        <span className="inline-block bg-[var(--bg-light)] text-[var(--text-primary)] px-2 py-1 rounded-md text-sm">
-                          {corporate.industry}
-                        </span>
-                      </td>
-                      <td className="py-4 px-4 text-[var(--text-primary)]">
-                        {corporate.prefecture || '-'}
-                      </td>
-                      <td className="py-4 px-4 text-[var(--text-primary)]">
-                        {corporate.capitalAmount ? 
-                          `${(corporate.capitalAmount / 10000).toLocaleString()}万円` : 
-                          '-'
-                        }
-                      </td>
-                      <td className="py-4 px-4 text-[var(--text-primary)]">
-                        {corporate.employeeCount ? 
-                          `${corporate.employeeCount.toLocaleString()}名` : 
-                          '-'
-                        }
-                      </td>
-                      <td className="py-4 px-4 text-[var(--text-primary)]">
-                        {new Date(corporate.establishedDate).getFullYear()}年
-                      </td>
-                      <td className="py-4 px-4">
-                        {corporate.website ? (
-                          <a 
-                            href={corporate.website} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="text-[var(--primary)] hover:underline text-sm break-all"
-                          >
-                            {corporate.website}
-                          </a>
-                        ) : (
-                          <span className="text-[var(--text-light)] text-sm">-</span>
-                        )}
-                      </td>
-                    </tr>
-                    ))
+                    <>
+                      {displayCompanies.map((company, index) => (
+                        <tr key={`${company.id}-${index}`} className="border-b border-[var(--border-color)] hover:bg-[var(--bg-secondary)]">
+                          <td className="py-4 px-4 font-medium">
+                            {company.companyName}
+                          </td>
+                          <td className="py-4 px-4">
+                            {company.companyWebsite ? (
+                              <a 
+                                href={company.companyWebsite} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="text-[var(--primary)] hover:underline text-sm break-all"
+                              >
+                                {company.companyWebsite.length > 40 
+                                  ? company.companyWebsite.substring(0, 40) + '...'
+                                  : company.companyWebsite
+                                }
+                              </a>
+                            ) : '-'}
+                          </td>
+                          <td className="py-4 px-4 text-sm">
+                            {company.capitalAmountText || '-'}
+                          </td>
+                          <td className="py-4 px-4 text-sm">
+                            {company.establishedYear || '-'}年
+                          </td>
+                          <td className="py-4 px-4 text-sm">
+                            {company.businessCategory || company.industryCategory ? (
+                              <span className="bg-[var(--bg-light)] px-2 py-1 rounded text-xs">
+                                {company.businessCategory || company.industryCategory}
+                              </span>
+                            ) : '-'}
+                          </td>
+                          <td className="py-4 px-4 text-sm">
+                            {company.listingStatus || '-'}
+                          </td>
+                          <td className="py-4 px-4 text-sm">
+                            {company.representative || '-'}
+                          </td>
+                        </tr>
+                      ))}
+                      
+                    </>
                   )}
                 </tbody>
               </table>
             </div>
-            
-            {/* ページネーション */}
-            {!loading && companies.length > 0 && (
-              <Pagination
-                pagination={pagination}
-                onPageChange={handlePageChange}
-                loading={loading}
-              />
-            )}
-          </CardBody>
-        </Card>
+          </div>
+        </div>
       </main>
+
+      {/* 通知モーダル */}
+      <div 
+        className="completion-notification"
+        style={{
+          position: 'fixed',
+          top: '20px',
+          right: '20px',
+          zIndex: 1000,
+          display: notification.visible ? 'block' : 'none'
+        }}
+      >
+        <div className="completion-message">
+          {notification.message}
+        </div>
+      </div>
     </div>
   )
 }

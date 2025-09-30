@@ -161,8 +161,22 @@ function convertToCSV(results) {
     return text;
   };
 
+  // 会社名が取得できなかった記事をスキップ
+  const validResults = results.filter(result => {
+    const companyName = result.companyName;
+    return companyName &&
+           companyName.trim() !== '' &&
+           companyName !== '(会社名なし)' &&
+           companyName !== '不明';
+  });
+
+  const skippedCount = results.length - validResults.length;
+  if (skippedCount > 0) {
+    console.log(`⚠️  会社名が取得できなかった記事をスキップ: ${skippedCount}件`);
+  }
+
   // データ行
-  const rows = results.map(result => {
+  const rows = validResults.map(result => {
     return [
       escapeCsv(result.deliveryDate),
       escapeCsv(result.pressReleaseUrl),

@@ -116,7 +116,8 @@ export default function PRTimesPage() {
     try {
       const searchParams = {
         ...filters,
-        page
+        page,
+        exportAll: true  // 全件取得
       }
 
       const response = await fetch('/api/prtimes/search', {

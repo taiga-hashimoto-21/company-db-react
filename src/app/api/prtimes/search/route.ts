@@ -91,7 +91,7 @@ async function performDatabaseSearch(searchParams: any, startTime: number) {
     countOnly = false
   } = searchParams
 
-  const actualLimit = exportAll ? 10000 : (tableOnly ? 50 : Math.min(limit, 1000)) // 上限を設定
+  const actualLimit = exportAll ? 999999999 : (tableOnly ? 50 : Math.min(limit, 1000)) // exportAllの場合は実質無制限
   const offset = exportAll ? 0 : (page - 1) * actualLimit
 
   const client = await pool.connect()

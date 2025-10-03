@@ -14,11 +14,11 @@ const puppeteer = require('puppeteer');
 // 設定
 // ========================================
 const CONFIG = {
-  HEADLESS: false,       // ブラウザを表示
+  HEADLESS: true,        // ブラウザを非表示（GitHub Actions対応）
   WAIT_MIN: 1000,        // 最小待機時間（ミリ秒）
   WAIT_MAX: 3000,        // 最大待機時間（ミリ秒）
   TIMEOUT: 30000,        // ページタイムアウト（30秒）
-  PARALLEL_BROWSERS: 10, // 並列実行するブラウザの数
+  PARALLEL_BROWSERS: 5,  // 並列実行するブラウザの数（GitHub Actions制約: 7GB RAM / 2コア）
 };
 
 // ログ出力用のロック
@@ -69,7 +69,7 @@ function isDeepPage(url) {
       return true;
     }
 
-    // 許可するパスのみ
+    // 許可するパス（完全一致）
     const allowedPaths = [
       '/',
       '/about',
@@ -77,8 +77,16 @@ function isDeepPage(url) {
       '/index.html',
     ];
 
-    // 完全一致のみOK、それ以外は全てスキップ
-    return !allowedPaths.includes(pathname);
+    // 許可するパス（前方一致）
+    const allowedPathPrefixes = [
+      '/news/',
+    ];
+
+    // 完全一致または前方一致でチェック
+    const isAllowed = allowedPaths.includes(pathname) ||
+                      allowedPathPrefixes.some(prefix => pathname.startsWith(prefix));
+
+    return !isAllowed;
 
   } catch (error) {
     return true; // URLパースエラーは安全側に倒してスキップ
@@ -550,11 +558,6 @@ async function checkAddressMatch(page, company, log) {
     let pageText = await page.evaluate(() => document.body.innerText);
     let hasPrefecture = pageText.includes(prefecture);
     let hasCity = city && pageText.includes(city);
-
-    // デバッグログ: 取得したテキストの一部を表示
-    log(`    🔍 デバッグ: 検索対象 - 都道府県: "${prefecture}", 市区町村: "${city}"`);
-    log(`    🔍 デバッグ: ページテキスト（最初の300文字）: "${pageText.substring(0, 300)}"`);
-    log(`    🔍 デバッグ: 都道府県一致: ${hasPrefecture}, 市区町村一致: ${hasCity}`);
 
     // 市区町村があればそれで判定、なければ都道府県で判定
     if ((city && hasCity) || (!city && hasPrefecture)) {

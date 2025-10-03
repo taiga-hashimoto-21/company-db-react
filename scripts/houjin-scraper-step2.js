@@ -64,6 +64,11 @@ function isDeepPage(url) {
     const urlObj = new URL(url);
     const pathname = urlObj.pathname;
 
+    // クエリパラメータがあるURLはスキップ
+    if (urlObj.search) {
+      return true;
+    }
+
     // 許可するパスのみ
     const allowedPaths = [
       '/',
@@ -97,7 +102,7 @@ function isSkipSite(url) {
 /**
  * DuckDuckGoで検索
  */
-async function searchDuckDuckGo(page, query) {
+async function searchDuckDuckGo(page, query, log) {
   try {
 
     await page.goto('https://duckduckgo.com/', { waitUntil: 'domcontentloaded', timeout: CONFIG.TIMEOUT });
@@ -123,11 +128,11 @@ async function searchDuckDuckGo(page, query) {
       return links;
     });
 
-    console.log(`  📊 検索結果: ${results.length}件`);
+    log(`  📊 検索結果: ${results.length}件`);
     return results.slice(0, 3); // 上位3件のみ
 
   } catch (error) {
-    console.error(`  ❌ 検索エラー: ${error.message}`);
+    log(`  ❌ 検索エラー: ${error.message}`);
     return [];
   }
 }
@@ -175,7 +180,7 @@ async function extractStructuredData(page, patterns) {
 /**
  * 代表者名を抽出
  */
-async function extractRepresentative(page) {
+async function extractRepresentative(page, log) {
   const patterns = ['代表者', '代表取締役', '社長', 'CEO', '代表'];
   const results = await extractStructuredData(page, patterns);
 
@@ -189,14 +194,14 @@ async function extractRepresentative(page) {
   value = value.replace(/代表取締役|社長|CEO|代表者|代表/g, '').trim();
   value = value.split(/\n|　|\s{2,}/)[0].trim(); // 改行やスペースで区切られた最初の部分のみ
 
-  console.log(`    ✓ 代表者名: ${value} (source: ${best.source})`);
+  log(`    ✓ 代表者名: ${value} (source: ${best.source})`);
   return value || null;
 }
 
 /**
  * 資本金を抽出
  */
-async function extractCapital(page) {
+async function extractCapital(page, log) {
   const patterns = ['資本金', 'capital'];
   const results = await extractStructuredData(page, patterns);
 
@@ -221,14 +226,14 @@ async function extractCapital(page) {
     amount *= 10000;
   }
 
-  console.log(`    ✓ 資本金: ${amount}円 (source: ${best.source})`);
+  log(`    ✓ 資本金: ${amount}円 (source: ${best.source})`);
   return Math.floor(amount);
 }
 
 /**
  * 従業員数を抽出
  */
-async function extractEmployees(page) {
+async function extractEmployees(page, log) {
   const patterns = ['従業員数', '社員数', 'employees', '従業員'];
   const results = await extractStructuredData(page, patterns);
 
@@ -243,7 +248,7 @@ async function extractEmployees(page) {
 
   const employees = parseInt(match[1].replace(/,/g, ''));
 
-  console.log(`    ✓ 従業員数: ${employees}名 (source: ${best.source})`);
+  log(`    ✓ 従業員数: ${employees}名 (source: ${best.source})`);
   return employees;
 }
 
@@ -366,7 +371,7 @@ const INDUSTRY_KEYWORDS = {
 /**
  * テキストから業種を判定
  */
-function matchIndustry(text, source) {
+function matchIndustry(text, source, log) {
   const matches = [];
 
   for (const [industry, keywords] of Object.entries(INDUSTRY_KEYWORDS)) {
@@ -397,14 +402,14 @@ function matchIndustry(text, source) {
   matches.sort((a, b) => b.matchCount - a.matchCount);
   const bestMatch = matches[0];
 
-  console.log(`    ✓ 業種: ${bestMatch.industry} (source: ${source}, マッチ: ${bestMatch.matchCount}件, キーワード: ${bestMatch.matchedKeywords.slice(0, 3).join(', ')}...)`);
+  log(`    ✓ 業種: ${bestMatch.industry} (source: ${source}, マッチ: ${bestMatch.matchCount}件, キーワード: ${bestMatch.matchedKeywords.slice(0, 3).join(', ')}...)`);
   return bestMatch.industry;
 }
 
 /**
  * 業種を抽出（2段階チェック）
  */
-async function extractBusinessType(page) {
+async function extractBusinessType(page, log) {
   try {
     // Step1: meta descriptionとタイトルから判定
     const metaData = await page.evaluate(() => {
@@ -420,34 +425,34 @@ async function extractBusinessType(page) {
     const metaText = `${metaData.title} ${metaData.metaDescription}`;
 
     if (metaText.trim()) {
-      const industry = matchIndustry(metaText, 'meta');
+      const industry = matchIndustry(metaText, 'meta', log);
       if (industry) {
         return industry;
       }
     }
 
-    console.log(`    ℹ️  metaディスクリプションでは判定できませんでした`);
+    log(`    ℹ️  metaディスクリプションでは判定できませんでした`);
 
     // Step2: ページテキストから判定
-    console.log(`    🔍 ページテキストを確認中...`);
+    log(`    🔍 ページテキストを確認中...`);
 
     const bodyText = await page.evaluate(() => {
       return document.body.innerText.substring(0, 5000); // 最初の5000文字
     });
 
     if (bodyText.trim()) {
-      const industry = matchIndustry(bodyText, 'page-text');
+      const industry = matchIndustry(bodyText, 'page-text', log);
       if (industry) {
         return industry;
       }
     }
 
     // どちらでも判定できない場合
-    console.log(`    ⚠️ 業種: 判定できませんでした → その他業界`);
+    log(`    ⚠️ 業種: 判定できませんでした → その他業界`);
     return 'その他業界';
 
   } catch (error) {
-    console.error(`    ❌ 業種抽出エラー: ${error.message}`);
+    log(`    ❌ 業種抽出エラー: ${error.message}`);
     return 'その他業界';
   }
 }
@@ -455,7 +460,7 @@ async function extractBusinessType(page) {
 /**
  * 特定のページを探して遷移
  */
-async function findSpecificPage(page, pageType) {
+async function findSpecificPage(page, pageType, log) {
   try {
     let textPatterns, pathPatterns;
 
@@ -505,16 +510,16 @@ async function findSpecificPage(page, pageType) {
 
     if (targetPageUrl) {
       const pageName = pageType === 'company' ? '会社概要' : 'プライバシーポリシー';
-      console.log(`    🔍 ${pageName}ページを発見: ${targetPageUrl}`);
+      log(`    🔍 ${pageName}ページを発見: ${targetPageUrl}`);
       await page.goto(targetPageUrl, { waitUntil: 'domcontentloaded', timeout: CONFIG.TIMEOUT });
-      await sleep(500, 500); // DOMレンダリング完了を待つ
+      await sleep(3000, 3000); // DOMレンダリング完了を待つ（3秒）
       return true;
     }
 
     return false;
   } catch (error) {
     const pageName = pageType === 'company' ? '会社概要' : 'プライバシーポリシー';
-    console.log(`    ⚠️ ${pageName}ページ遷移エラー: ${error.message}`);
+    log(`    ⚠️ ${pageName}ページ遷移エラー: ${error.message}`);
     return false;
   }
 }
@@ -522,17 +527,23 @@ async function findSpecificPage(page, pageType) {
 /**
  * 会社概要ページを探して遷移（後方互換性のため）
  */
-async function findCompanyInfoPage(page) {
-  return await findSpecificPage(page, 'company');
+async function findCompanyInfoPage(page, log) {
+  return await findSpecificPage(page, 'company', log);
 }
 
 /**
  * 住所がページ内に含まれているかチェック
  */
-async function checkAddressMatch(page, company) {
+async function checkAddressMatch(page, company, log) {
   try {
     const prefecture = company.prefecture;
-    const cityMatch = company.address_1.match(/^(.{2,5}?[市区町村])/);
+
+    // まず[市区町村]で抽出を試みる
+    let cityMatch = company.address_1.match(/^(.{2,5}?[市区町村])/);
+    // 失敗したら、数字が出るまでの文字列を使う（最大5文字）
+    if (!cityMatch) {
+      cityMatch = company.address_1.match(/^([^\d]{2,5})/);
+    }
     const city = cityMatch ? cityMatch[1] : '';
 
     // まず現在のページで住所確認
@@ -540,14 +551,20 @@ async function checkAddressMatch(page, company) {
     let hasPrefecture = pageText.includes(prefecture);
     let hasCity = city && pageText.includes(city);
 
-    if (hasPrefecture && hasCity) {
-      console.log(`    ✓ 住所確認: 現在のページで一致`);
+    // デバッグログ: 取得したテキストの一部を表示
+    log(`    🔍 デバッグ: 検索対象 - 都道府県: "${prefecture}", 市区町村: "${city}"`);
+    log(`    🔍 デバッグ: ページテキスト（最初の300文字）: "${pageText.substring(0, 300)}"`);
+    log(`    🔍 デバッグ: 都道府県一致: ${hasPrefecture}, 市区町村一致: ${hasCity}`);
+
+    // 市区町村があればそれで判定、なければ都道府県で判定
+    if ((city && hasCity) || (!city && hasPrefecture)) {
+      log(`    ✓ 住所確認: 現在のページで一致`);
       return true;
     }
 
     // 見つからない場合、会社概要ページを探す
-    console.log(`    ℹ️  現在のページに住所なし → 会社概要ページを探索`);
-    const foundCompany = await findSpecificPage(page, 'company');
+    log(`    ℹ️  現在のページに住所なし → 会社概要ページを探索`);
+    const foundCompany = await findSpecificPage(page, 'company', log);
 
     if (foundCompany) {
       // 会社概要ページで再度確認
@@ -555,20 +572,21 @@ async function checkAddressMatch(page, company) {
       hasPrefecture = pageText.includes(prefecture);
       hasCity = city && pageText.includes(city);
 
-      if (hasPrefecture && hasCity) {
-        console.log(`    ✓ 住所確認: 会社概要ページで一致`);
+      // 市区町村があればそれで判定、なければ都道府県で判定
+      if ((city && hasCity) || (!city && hasPrefecture)) {
+        log(`    ✓ 住所確認: 会社概要ページで一致`);
         return true;
       }
-      console.log(`    ℹ️  会社概要ページでも住所なし → プライバシーポリシーを探索`);
+      log(`    ℹ️  会社概要ページでも住所なし → プライバシーポリシーを探索`);
     } else {
-      console.log(`    ℹ️  会社概要ページが見つからない → プライバシーポリシーを探索`);
+      log(`    ℹ️  会社概要ページが見つからない → プライバシーポリシーを探索`);
     }
 
     // プライバシーポリシーページを探す
-    const foundPrivacy = await findSpecificPage(page, 'privacy');
+    const foundPrivacy = await findSpecificPage(page, 'privacy', log);
 
     if (!foundPrivacy) {
-      console.log(`    ⚠️ プライバシーポリシーページも見つかりません`);
+      log(`    ⚠️ プライバシーポリシーページも見つかりません`);
       return false;
     }
 
@@ -577,16 +595,17 @@ async function checkAddressMatch(page, company) {
     hasPrefecture = pageText.includes(prefecture);
     hasCity = city && pageText.includes(city);
 
-    if (hasPrefecture && hasCity) {
-      console.log(`    ✓ 住所確認: プライバシーポリシーページで一致`);
+    // 市区町村があればそれで判定、なければ都道府県で判定
+    if ((city && hasCity) || (!city && hasPrefecture)) {
+      log(`    ✓ 住所確認: プライバシーポリシーページで一致`);
       return true;
     }
 
-    console.log(`    ✗ 住所確認: 全てのページで不一致`);
+    log(`    ✗ 住所確認: 全てのページで不一致`);
     return false;
 
   } catch (error) {
-    console.log(`    ❌ 住所確認エラー: ${error.message}`);
+    log(`    ❌ 住所確認エラー: ${error.message}`);
     return false;
   }
 }
@@ -597,17 +616,14 @@ async function checkAddressMatch(page, company) {
 async function scrapeCompany(browser, company, globalIndex, totalCompanies, batchIndex) {
   // ログをバッファに溜める
   const logs = [];
-  const originalLog = console.log;
-  const originalError = console.error;
 
-  // console.logをオーバーライド
-  console.log = (...args) => logs.push(args.join(' '));
-  console.error = (...args) => logs.push(args.join(' '));
+  // カスタムログ関数（console.logは上書きしない）
+  const log = (...args) => logs.push(args.join(' '));
 
   try {
     const batchLabel = batchIndex !== undefined ? `[Browser ${batchIndex + 1}] ` : '';
-    console.log(`\n${batchLabel}[${globalIndex + 1}/${totalCompanies}] ${company.company_name}`);
-    console.log(`  📍 ${company.prefecture} ${company.address_1}`);
+    log(`\n${batchLabel}[${globalIndex + 1}/${totalCompanies}] ${company.company_name}`);
+    log(`  📍 ${company.prefecture} ${company.address_1}`);
 
     const page = await browser.newPage();
 
@@ -619,91 +635,87 @@ async function scrapeCompany(browser, company, globalIndex, totalCompanies, batc
       const query = `${company.company_name} ${company.prefecture}${company.address_1}`;
 
       // DuckDuckGoで検索
-      const searchResults = await searchDuckDuckGo(page, query);
+      const searchResults = await searchDuckDuckGo(page, query, log);
 
       if (searchResults.length === 0) {
-        console.log(`  ⚠️ 検索結果が0件でした`);
+        log(`  ⚠️ 検索結果が0件でした`);
         return company;
       }
 
     // 上位3件をチェック
     for (const url of searchResults) {
-      console.log(`\n  🌐 チェック中: ${url}`);
+      log(`\n  🌐 チェック中: ${url}`);
 
       // 下層ページまたは求人サイトはスキップ
       if (isDeepPage(url)) {
-        console.log(`  ⏭️  スキップ: 下層ページ`);
+        log(`  ⏭️  スキップ: 下層ページ`);
         continue;
       }
 
       if (isSkipSite(url)) {
-        console.log(`  ⏭️  スキップ: 求人・DBサイト`);
+        log(`  ⏭️  スキップ: 求人・DBサイト`);
         continue;
       }
 
       // ページを開く
       try {
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: CONFIG.TIMEOUT });
-        await sleep(500, 500); // DOMレンダリング完了を待つ
+        await sleep(3000, 3000); // DOMレンダリング完了を待つ（3秒）
       } catch (error) {
-        console.log(`  ❌ ページ読み込みエラー: ${error.message}`);
+        log(`  ❌ ページ読み込みエラー: ${error.message}`);
         continue;
       }
 
       // 住所マッチング
-      const addressMatch = await checkAddressMatch(page, company);
+      const addressMatch = await checkAddressMatch(page, company, log);
       if (!addressMatch) {
-        console.log(`  ⏭️  スキップ: 住所不一致`);
+        log(`  ⏭️  スキップ: 住所不一致`);
         continue;
       }
 
-      console.log(`  ✅ ホームページを発見！`);
+      log(`  ✅ ホームページを発見！`);
 
       // データ抽出前に会社概要ページへ移動
-      console.log(`  🔍 会社概要ページでデータ抽出を試みます...`);
-      const foundCompanyPage = await findCompanyInfoPage(page);
+      log(`  🔍 会社概要ページでデータ抽出を試みます...`);
+      const foundCompanyPage = await findCompanyInfoPage(page, log);
 
       if (!foundCompanyPage) {
-        console.log(`  ⚠️ 会社概要ページが見つからないため、現在のページで抽出します`);
+        log(`  ⚠️ 会社概要ページが見つからないため、現在のページで抽出します`);
       }
 
       // データを抽出
       company.company_website = url;
 
-      const representative = await extractRepresentative(page);
+      const representative = await extractRepresentative(page, log);
       if (representative) company.representative = representative;
 
-      const capital = await extractCapital(page);
+      const capital = await extractCapital(page, log);
       if (capital) company.capital_amount = capital;
 
-      const employees = await extractEmployees(page);
+      const employees = await extractEmployees(page, log);
       if (employees) company.employees = employees;
 
-      const businessType = await extractBusinessType(page);
+      const businessType = await extractBusinessType(page, log);
       if (businessType) company.business_type = businessType;
 
       break; // 見つかったので次の会社へ
     }
 
       if (!company.company_website) {
-        console.log(`  ⚠️ ホームページが見つかりませんでした`);
+        log(`  ⚠️ ホームページが見つかりませんでした`);
       }
 
     } catch (error) {
-      console.error(`  ❌ スクレイピングエラー: ${error.message}`);
+      log(`  ❌ スクレイピングエラー: ${error.message}`);
     } finally {
       await page.close();
     }
 
   } finally {
-    // ログを復元して一括出力
-    console.log = originalLog;
-    console.error = originalError;
-
     // ロックを取得してログを出力
     await logLock;
     logLock = new Promise(resolve => {
-      originalLog(logs.join('\n'));
+      console.log(logs.join('\n'));
       resolve();
     });
   }
@@ -743,7 +755,6 @@ async function processBatch(batch, batchIndex, startIndex, totalCompanies) {
     }
 
     await browser.close();
-    console.log(`\n✅ Browser ${batchIndex + 1} 完了`);
 
     return results;
 

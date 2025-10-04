@@ -16,11 +16,11 @@ const path = require('path');
 // ========================================
 const CONFIG = {
   // 取得したい日付を設定（YYYY-MM-DD形式）
-  TARGET_DATE_FROM: '2025-08-01',  // 開始日
-  TARGET_DATE_TO: '2025-08-05',    // 終了日
+  TARGET_DATE_FROM: '2020-08-01',  // 開始日
+  TARGET_DATE_TO: '2020-08-05',    // 終了日
 
   // 上限設定（TODO: 後で削除してください）
-  MAX_RESULTS: 1000,  // 50件制限（削除して全件取得する場合はこの行とlimit処理を削除）
+  MAX_RESULTS: 300,  // 50件制限（削除して全件取得する場合はこの行とlimit処理を削除）
 
   // その他設定
   APPLICATION_ID: 'KtLKHsYJGaNRT',  // 国税庁APIのアプリケーションID
@@ -70,8 +70,12 @@ async function fetchHoujinData(startDate, endDate) {
     // companiesテーブル形式に変換
     const companies = dataLines.map(line => parseCsvLine(line)).filter(c => c !== null);
 
-    // TODO: 50件制限（後で削除してください）
-    const limitedCompanies = companies.slice(0, CONFIG.MAX_RESULTS);
+    // 設立年月が設定されているデータのみに絞る（更新日===法人番号付与日）
+    const filteredCompanies = companies.filter(c => c.established_year !== null);
+    console.log(`📊 設立年月あり: ${filteredCompanies.length}件`);
+
+    // TODO: 1000件制限（後で削除してください）
+    const limitedCompanies = filteredCompanies.slice(0, CONFIG.MAX_RESULTS);
     console.log(`📊 制限適用後: ${limitedCompanies.length}件`);
 
     return limitedCompanies;
@@ -90,20 +94,25 @@ function parseCsvLine(line) {
     const columns = line.split(',').map(col => col.replace(/^"|"$/g, '').trim());
 
     // 列データ
-    const houjinBangou = columns[1];      // 法人番号
-    const companyName = columns[6];       // 会社名
-    const prefecture = columns[9];        // 都道府県
-    const city = columns[10];             // 市区町村
-    const streetNumber = columns[11];     // 番地
-    const establishedDate = columns[22];  // 設立日（YYYY-MM-DD）
+    const houjinBangou = columns[1];              // 法人番号
+    const companyName = columns[6];               // 会社名
+    const prefecture = columns[9];                // 都道府県
+    const city = columns[10];                     // 市区町村
+    const streetNumber = columns[11];             // 番地
+    const diffUpdateDate = columns[4];            // 差分データの更新年月日
+    const assignmentDate = columns[22];           // 法人番号指定年月日
 
-    // 設立日から年月を抽出
+    // 設立年月の判定：差分データの更新年月日と法人番号指定年月日が一致している場合のみ設定
     let establishedYear = null;
     let establishedMonth = null;
-    if (establishedDate && establishedDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
-      const [year, month] = establishedDate.split('-');
-      establishedYear = parseInt(year);
-      establishedMonth = parseInt(month);
+
+    if (diffUpdateDate && assignmentDate && diffUpdateDate === assignmentDate) {
+      // 一致している場合は設立日として扱う
+      if (assignmentDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        const [year, month] = assignmentDate.split('-');
+        establishedYear = parseInt(year);
+        establishedMonth = parseInt(month);
+      }
     }
 
     // companiesテーブル形式（完全一致）

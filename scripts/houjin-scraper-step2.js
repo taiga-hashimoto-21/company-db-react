@@ -76,16 +76,10 @@ function isDeepPage(url) {
       '/about',
       '/index',
       '/index.html',
+      '/company'
     ];
 
-    // 許可するパス（前方一致）
-    const allowedPathPrefixes = [
-      '/news/',
-    ];
-
-    // 完全一致または前方一致でチェック
-    const isAllowed = allowedPaths.includes(pathname) ||
-                      allowedPathPrefixes.some(prefix => pathname.startsWith(prefix));
+    const isAllowed = allowedPaths.includes(pathname);
 
     return !isAllowed;
 
@@ -202,6 +196,15 @@ async function extractRepresentative(page, log) {
   let value = best.value;
   value = value.replace(/代表取締役|社長|CEO|代表者|代表/g, '').trim();
   value = value.split('\n')[0].trim(); // 改行で区切られた最初の部分のみ（スペースは保持）
+
+  // 括弧内の読み仮名を削除（全角・半角両方）
+  value = value.replace(/[（(][\u3040-\u309F\u30A0-\u30FFa-zA-Zァ-ヴー\s]+[）)]/g, '').trim();
+
+  // コロン以降を削除
+  value = value.split(/[：:]/)[0].trim();
+
+  // 漢字と全角スペースのみ抽出（ひらがな・カタカナ・半角文字を除外）
+  value = value.replace(/[^\u4E00-\u9FFF\u3005-\u3007　\s]/g, '').trim();
 
   // 数字が含まれている場合は除外（資本金や金額の誤検出を防ぐ）
   if (/\d/.test(value)) {

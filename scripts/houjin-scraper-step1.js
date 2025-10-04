@@ -19,7 +19,7 @@ const CONFIG = {
   TARGET_DATE_FROM: '2025-09-01',  // 開始日
   TARGET_DATE_TO: '2025-09-01',    // 終了日（1日のみ取得）
 
-  // その他設定
+  // その他設定にほ
   APPLICATION_ID: 'KtLKHsYJGaNRT',  // 国税庁APIのアプリケーションID
   REQUEST_DELAY: 1000,              // リクエスト間隔（ミリ秒）
 };
@@ -29,43 +29,91 @@ const HOUJIN_API_BASE_URL = 'https://api.houjin-bangou.nta.go.jp/4';
 const DIFF_ENDPOINT = '/diff';
 
 /**
- * 国税庁APIから法人データを取得
+ * 国税庁APIから法人データを取得（divide対応で全件取得）
  */
 async function fetchHoujinData(startDate, endDate) {
   console.log('🔍 法人番号API検索開始');
   console.log(`📅 検索期間: ${startDate} ~ ${endDate}`);
-  console.log(`📊 上限: ${CONFIG.MAX_RESULTS}件`);
+
+  const iconv = require('iconv-lite');
+  const allDataLines = [];
 
   try {
-    // APIリクエスト
     const url = `${HOUJIN_API_BASE_URL}${DIFF_ENDPOINT}`;
-    const params = {
+
+    // 1回目のリクエスト（divide=1）でヘッダー情報を取得
+    console.log(`\n📡 APIリクエスト中 (divide=1)...`);
+    const firstParams = {
       id: CONFIG.APPLICATION_ID,
       from: startDate,
       to: endDate,
       type: '01',  // 01: 新規設立のみ
-      divide: '1', // 1: CSV形式
+      divide: '1',
     };
 
-    console.log(`\n📡 APIリクエスト中...`);
-    const response = await axios.get(url, {
-      params,
-      timeout: 60000,  // 60秒タイムアウト
-      responseType: 'arraybuffer',  // バイナリデータとして取得
+    const firstResponse = await axios.get(url, {
+      params: firstParams,
+      timeout: 60000,
+      responseType: 'arraybuffer',
     });
 
-    // Shift-JISからUTF-8に変換
-    const iconv = require('iconv-lite');
-    const csvText = iconv.decode(response.data, 'shift-jis');
+    const firstCsvText = iconv.decode(firstResponse.data, 'shift-jis');
+    const firstLines = firstCsvText.split('\n');
 
-    // CSVをパース
-    const lines = csvText.split('\n');
-    const dataLines = lines.slice(1).filter(line => line.trim() !== ''); // ヘッダー行をスキップ
+    // ヘッダー行から総件数と分割数を取得
+    // 形式: "日付,総件数,現在分割番号,総分割数"
+    const headerLine = firstLines[0].replace(/"/g, '').split(',');
+    const totalCount = parseInt(headerLine[1]) || 0;
+    const currentDivide = parseInt(headerLine[2]) || 1;
+    const totalDivides = parseInt(headerLine[3]) || 1;
 
-    console.log(`✅ ${dataLines.length}件取得完了`);
+    console.log(`📊 総件数: ${totalCount}件 (${totalDivides}分割)`);
+
+    // 1回目のデータを追加
+    const firstDataLines = firstLines.slice(1).filter(line => line.trim() !== '');
+    allDataLines.push(...firstDataLines);
+    console.log(`✅ divide=1: ${firstDataLines.length}件取得`);
+
+    // 2回目以降のリクエスト（2000件未満になったら終了）
+    if (totalDivides > 1 && firstDataLines.length === 2000) {
+      for (let i = 2; i <= totalDivides; i++) {
+        console.log(`\n📡 APIリクエスト中 (divide=${i})...`);
+
+        const params = {
+          id: CONFIG.APPLICATION_ID,
+          from: startDate,
+          to: endDate,
+          type: '01',
+          divide: String(i),
+        };
+
+        const response = await axios.get(url, {
+          params,
+          timeout: 60000,
+          responseType: 'arraybuffer',
+        });
+
+        const csvText = iconv.decode(response.data, 'shift-jis');
+        const lines = csvText.split('\n');
+        const dataLines = lines.slice(1).filter(line => line.trim() !== '');
+
+        allDataLines.push(...dataLines);
+        console.log(`✅ divide=${i}: ${dataLines.length}件取得`);
+
+        // 2000件未満なら最後の分割
+        if (dataLines.length < 2000) {
+          break;
+        }
+
+        // API制限を避けるため待機
+        await new Promise(resolve => setTimeout(resolve, CONFIG.REQUEST_DELAY));
+      }
+    }
+
+    console.log(`\n✅ 全データ取得完了: ${allDataLines.length}件`);
 
     // companiesテーブル形式に変換
-    const companies = dataLines.map(line => parseCsvLine(line)).filter(c => c !== null);
+    const companies = allDataLines.map(line => parseCsvLine(line)).filter(c => c !== null);
 
     // 設立年月が設定されているデータのみに絞る（更新日===法人番号付与日）
     const filteredCompanies = companies.filter(c => c.established_year !== null);

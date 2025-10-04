@@ -4,17 +4,23 @@
  * Step1: 国税庁APIから法人データ取得
  * Step2: ホームページをスクレイピングして情報補完
  * Step3: DBに保存
+ *
+ * 自動化機能:
+ * - scraper-state.jsonから処理期間を読み取り
+ * - 1日ずつ処理してDB保存
+ * - 完了後、次回の処理期間（2ヶ月前）を計算して保存
  */
 
 // 環境変数を読み込み
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env.local') });
 
-const { fetchHoujinData, CONFIG } = require('./houjin-scraper-step1');
+const { fetchHoujinData } = require('./houjin-scraper-step1');
 const { scrapeCompanies } = require('./houjin-scraper-step2');
 const { Pool } = require('pg');
 const { Transform } = require('stream');
 const copyFrom = require('pg-copy-streams').from;
 const fs = require('fs').promises;
+const fsSync = require('fs');
 const path = require('path');
 
 /**
@@ -116,80 +122,167 @@ async function saveToDatabase(companies) {
 }
 
 /**
+ * 状態ファイルの読み込み
+ */
+function loadState() {
+  const statePath = path.join(__dirname, 'scraper-state.json');
+  if (fsSync.existsSync(statePath)) {
+    return JSON.parse(fsSync.readFileSync(statePath, 'utf-8'));
+  }
+  // 初期状態
+  return {
+    lastProcessedStartDate: null,
+    lastProcessedEndDate: null,
+    nextStartDate: '2025-08-01',
+    nextEndDate: '2025-09-30',
+    totalProcessed: 0,
+    lastRunDate: null
+  };
+}
+
+/**
+ * 状態ファイルの保存
+ */
+function saveState(state) {
+  const statePath = path.join(__dirname, 'scraper-state.json');
+  fsSync.writeFileSync(statePath, JSON.stringify(state, null, 2), 'utf-8');
+}
+
+/**
+ * 次回の処理期間を計算（2ヶ月前に遡る）
+ */
+function calculateNextPeriod(currentStartDate) {
+  const start = new Date(currentStartDate);
+
+  // 2ヶ月前の開始日を計算
+  const nextEndDate = new Date(start);
+  nextEndDate.setDate(nextEndDate.getDate() - 1); // 1日前
+
+  const nextStartDate = new Date(nextEndDate);
+  nextStartDate.setMonth(nextStartDate.getMonth() - 2); // 2ヶ月前
+
+  return {
+    nextStartDate: nextStartDate.toISOString().split('T')[0],
+    nextEndDate: nextEndDate.toISOString().split('T')[0]
+  };
+}
+
+/**
+ * 日付範囲の全日付を生成
+ */
+function generateDateRange(startDate, endDate) {
+  const dates = [];
+  const current = new Date(startDate);
+  const end = new Date(endDate);
+
+  while (current <= end) {
+    dates.push(current.toISOString().split('T')[0]);
+    current.setDate(current.getDate() + 1);
+  }
+
+  return dates;
+}
+
+/**
+ * 1日分の処理
+ */
+async function processDate(date) {
+  console.log(`\n📅 ${date} の処理開始...`);
+
+  // Step1: 国税庁APIから取得
+  const companies = await fetchHoujinData(date, date);
+
+  if (companies.length === 0) {
+    console.log(`⚠️ ${date}: 取得データが0件でした`);
+    return 0;
+  }
+
+  console.log(`✅ Step1完了: ${companies.length}件取得`);
+
+  // Step2: スクレイピング
+  const scrapedCompanies = await scrapeCompanies(companies);
+  console.log(`✅ Step2完了`);
+
+  // ホームページが見つかったデータのみをフィルタリング
+  const companiesWithWebsite = scrapedCompanies.filter(c => c.company_website);
+
+  // 同じドメインのデータを除外
+  const seenDomains = new Set();
+  const uniqueCompanies = companiesWithWebsite.filter(c => {
+    try {
+      const url = new URL(c.company_website);
+      const domain = url.hostname;
+
+      if (seenDomains.has(domain)) {
+        return false;
+      }
+
+      seenDomains.add(domain);
+      return true;
+    } catch (error) {
+      return true;
+    }
+  });
+
+  console.log(`🔍 重複除外: ${companiesWithWebsite.length}件 → ${uniqueCompanies.length}件`);
+
+  // Step3: データベースに保存
+  if (uniqueCompanies.length > 0) {
+    await saveToDatabase(uniqueCompanies);
+    console.log(`✅ Step3完了: ${uniqueCompanies.length}件保存`);
+  }
+
+  return uniqueCompanies.length;
+}
+
+/**
  * メイン処理
  */
 async function main() {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('🏢 法人スクレイパー統合実行');
+  console.log('🏢 法人スクレイパー自動実行');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
   try {
-    // Step1: 国税庁APIから取得
-    console.log('📥 Step1を実行中...\n');
-    const companies = await fetchHoujinData(
-      CONFIG.TARGET_DATE_FROM,
-      CONFIG.TARGET_DATE_TO
-    );
+    // 状態ファイル読み込み
+    const state = loadState();
+    console.log(`📋 処理期間: ${state.nextStartDate} ~ ${state.nextEndDate}\n`);
 
-    if (companies.length === 0) {
-      console.log('⚠️ Step1で取得データが0件でした');
-      return;
+    // 日付範囲を生成
+    const dates = generateDateRange(state.nextStartDate, state.nextEndDate);
+    console.log(`📊 処理対象: ${dates.length}日分\n`);
+
+    let totalSaved = 0;
+
+    // 各日付を順次処理
+    for (const date of dates) {
+      const saved = await processDate(date);
+      totalSaved += saved;
+      console.log(`累計保存件数: ${totalSaved}件`);
     }
 
-    console.log(`✅ Step1完了: ${companies.length}件取得\n`);
+    // 次回の期間を計算
+    const nextPeriod = calculateNextPeriod(state.nextStartDate);
 
-    // Step2: スクレイピング
-    console.log('🌐 Step2を実行中...\n');
-    const scrapedCompanies = await scrapeCompanies(companies);
-    console.log(`✅ Step2完了\n`);
+    // 状態を更新
+    const newState = {
+      lastProcessedStartDate: state.nextStartDate,
+      lastProcessedEndDate: state.nextEndDate,
+      nextStartDate: nextPeriod.nextStartDate,
+      nextEndDate: nextPeriod.nextEndDate,
+      totalProcessed: state.totalProcessed + totalSaved,
+      lastRunDate: new Date().toISOString()
+    };
 
-    // ホームページが見つかったデータのみをフィルタリング
-    const companiesWithWebsite = scrapedCompanies.filter(c => c.company_website);
+    saveState(newState);
 
-    // 同じドメインのデータを除外（最初に出現したものだけ残す）
-    const seenDomains = new Set();
-    const uniqueCompanies = companiesWithWebsite.filter(c => {
-      try {
-        const url = new URL(c.company_website);
-        const domain = url.hostname;
-
-        if (seenDomains.has(domain)) {
-          return false; // 既に出現したドメインなのでスキップ
-        }
-
-        seenDomains.add(domain);
-        return true;
-      } catch (error) {
-        // URLパースエラーの場合は含める
-        return true;
-      }
-    });
-
-    console.log(`🔍 重複除外: ${companiesWithWebsite.length}件 → ${uniqueCompanies.length}件\n`);
-
-    // Step3: データベースに保存
-    console.log('💾 Step3を実行中...\n');
-    await saveToDatabase(uniqueCompanies);
-    console.log(`✅ Step3完了\n`);
-
-    // 統計情報
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('📊 最終結果');
+    console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('📊 実行結果');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-
-    const websiteCount = scrapedCompanies.filter(c => c.company_website).length;
-    const representativeCount = uniqueCompanies.filter(c => c.representative).length;
-    const capitalCount = uniqueCompanies.filter(c => c.capital_amount).length;
-    const employeesCount = uniqueCompanies.filter(c => c.employees).length;
-
-    console.log(`処理件数: ${scrapedCompanies.length}件`);
-    console.log(`ホームページ発見: ${websiteCount}件 (${Math.round(websiteCount / scrapedCompanies.length * 100)}%)`);
-    console.log(`DB保存件数: ${uniqueCompanies.length}件\n`);
-    console.log(`--- DB保存データの内訳 ---`);
-    console.log(`代表者名: ${representativeCount}件 (${Math.round(representativeCount / uniqueCompanies.length * 100)}%)`);
-    console.log(`資本金: ${capitalCount}件 (${Math.round(capitalCount / uniqueCompanies.length * 100)}%)`);
-    console.log(`従業員数: ${employeesCount}件 (${Math.round(employeesCount / uniqueCompanies.length * 100)}%)`);
-
+    console.log(`処理期間: ${state.nextStartDate} ~ ${state.nextEndDate}`);
+    console.log(`保存件数: ${totalSaved}件`);
+    console.log(`次回期間: ${nextPeriod.nextStartDate} ~ ${nextPeriod.nextEndDate}`);
+    console.log(`累計保存: ${newState.totalProcessed}件`);
     console.log('\n✅ 全ての処理が完了しました！\n');
 
   } catch (error) {

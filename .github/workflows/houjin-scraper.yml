@@ -1,0 +1,50 @@
+name: 法人スクレイパー自動実行
+
+on:
+  schedule:
+    # 毎晩0:30 (JST 9:30) に実行
+    - cron: '30 0 * * *'
+  workflow_dispatch:  # 手動実行も可能
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1380  # 23時間 (23 * 60 = 1380分)
+
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+
+      - name: Node.js セットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 依存関係インストール
+        run: |
+          cd company-db-react
+          npm ci
+
+      - name: Playwrightインストール
+        run: |
+          cd company-db-react
+          npx playwright install --with-deps chromium
+
+      - name: 環境変数設定
+        run: |
+          cd company-db-react
+          echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> .env.local
+
+      - name: 法人スクレイパー実行
+        run: |
+          cd company-db-react
+          node scripts/houjin-scraper-main.js
+
+      - name: 状態ファイルをコミット
+        run: |
+          cd company-db-react
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add scripts/scraper-state.json
+          git diff --staged --quiet || git commit -m "chore: 法人スクレイパー状態更新 [skip ci]"
+          git push

@@ -1,8 +1,8 @@
 {
-  "lastProcessedStartDate": null,
-  "lastProcessedEndDate": null,
-  "nextStartDate": "2025-09-01",
-  "nextEndDate": "2025-09-03",
-  "totalProcessed": 0,
-  "lastRunDate": null
+  "lastProcessedStartDate": "2025-09-01",
+  "lastProcessedEndDate": "2025-09-03",
+  "nextStartDate": "2025-07-01",
+  "nextEndDate": "2025-08-31",
+  "totalProcessed": 71,
+  "lastRunDate": "2025-10-04T15:59:36.684Z"
 }

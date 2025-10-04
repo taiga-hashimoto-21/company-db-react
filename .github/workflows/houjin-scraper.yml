@@ -21,23 +21,18 @@ jobs:
           node-version: '20'
 
       - name: 依存関係インストール
-        working-directory: company-db-react
         run: npm ci
 
       - name: Playwrightインストール
-        working-directory: company-db-react
         run: npx playwright install --with-deps chromium
 
       - name: 環境変数設定
-        working-directory: company-db-react
         run: echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> .env.local
 
       - name: 法人スクレイパー実行
-        working-directory: company-db-react
         run: node scripts/houjin-scraper-main.js
 
       - name: 状態ファイルをコミット
-        working-directory: company-db-react
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"

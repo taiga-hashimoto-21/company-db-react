@@ -18,7 +18,7 @@ const CONFIG = {
   WAIT_MIN: 1000,        // 最小待機時間（ミリ秒）
   WAIT_MAX: 3000,        // 最大待機時間（ミリ秒）
   TIMEOUT: 30000,        // ページタイムアウト（30秒）
-  PARALLEL_BROWSERS: 5,  // 並列実行するブラウザの数（GitHub Actions制約: 7GB RAM / 2コア）
+  PARALLEL_BROWSERS: 20,  // 並列実行するブラウザの数（GitHub Actions制約: 7GB RAM / 2コア）
 };
 
 // ログ出力用のロック
@@ -46,6 +46,7 @@ const SKIP_SITE_DOMAINS = [
   'tsr-net.co.jp',
   'bizdb.jp',
   'kigyou-db.com',
+  'jbplt.jp',
 ];
 
 /**
@@ -189,7 +190,7 @@ async function extractStructuredData(page, patterns) {
  * 代表者名を抽出
  */
 async function extractRepresentative(page, log) {
-  const patterns = ['代表者', '代表取締役', '社長', 'CEO', '代表'];
+  const patterns = ['代表者', '代表取締役', '社長', 'CEO', '代表','代表社員'];
   const results = await extractStructuredData(page, patterns);
 
   if (results.length === 0) return null;
@@ -200,7 +201,13 @@ async function extractRepresentative(page, log) {
   // 値をクリーニング
   let value = best.value;
   value = value.replace(/代表取締役|社長|CEO|代表者|代表/g, '').trim();
-  value = value.split(/\n|　|\s{2,}/)[0].trim(); // 改行やスペースで区切られた最初の部分のみ
+  value = value.split('\n')[0].trim(); // 改行で区切られた最初の部分のみ（スペースは保持）
+
+  // 数字が含まれている場合は除外（資本金や金額の誤検出を防ぐ）
+  if (/\d/.test(value)) {
+    log(`    ⚠️ 代表者名に数字が含まれているため除外: "${value}"`);
+    return null;
+  }
 
   log(`    ✓ 代表者名: ${value} (source: ${best.source})`);
   return value || null;
@@ -539,6 +546,122 @@ async function findCompanyInfoPage(page, log) {
   return await findSpecificPage(page, 'company', log);
 }
 
+// ========================================
+// 会社名マッチング関連
+// （後で削除・調整しやすいように独立したセクション）
+// ========================================
+
+/**
+ * 会社名を正規化（法人格除去＋全角半角・大文字小文字・スペース統一）
+ */
+function normalizeCompanyName(name) {
+  if (!name) return '';
+
+  // 1. 法人格を除去
+  const legalForms = [
+    '株式会社', '有限会社', '合同会社', '合資会社', '合名会社',
+    '一般社団法人', '一般財団法人', '公益社団法人', '公益財団法人',
+    '特定非営利活動法人', 'NPO法人', '医療法人', '学校法人', '社会福祉法人',
+  ];
+
+  let normalized = name;
+  legalForms.forEach(form => {
+    normalized = normalized.replace(new RegExp(form, 'g'), '');
+  });
+
+  // 2. 全角英数字を半角に変換
+  normalized = normalized.replace(/[Ａ-Ｚａ-ｚ０-９]/g, (s) => {
+    return String.fromCharCode(s.charCodeAt(0) - 0xFEE0);
+  });
+
+  // 3. 小文字に統一
+  normalized = normalized.toLowerCase();
+
+  // 4. スペース（全角・半角）を除去
+  normalized = normalized.replace(/[\s　]/g, '');
+
+  return normalized;
+}
+
+/**
+ * 会社名がページ内に含まれているかチェック（3ステップ）
+ */
+async function checkCompanyNameMatch(page, company, log) {
+  try {
+    const originalName = company.company_name;
+    const normalizedName = normalizeCompanyName(originalName);
+
+    if (!normalizedName) {
+      log(`    ⚠️ 会社名が空です`);
+      return false;
+    }
+
+    log(`    🔍 会社名検索: "${originalName}" → 正規化後: "${normalizedName}"`);
+
+    // ステップ1: 現在のページで確認
+    let pageText = await page.evaluate(() => document.body.innerText);
+    let normalizedPageText = normalizeCompanyName(pageText);
+
+    if (normalizedPageText.includes(normalizedName)) {
+      log(`    ✓ 会社名確認: 現在のページで一致`);
+      return true;
+    }
+
+    // ステップ2: 会社概要ページで確認
+    log(`    ℹ️  現在のページに会社名なし → 会社概要ページを探索`);
+    const currentUrl = page.url();
+    const foundCompany = await findSpecificPage(page, 'company', log);
+
+    if (foundCompany) {
+      pageText = await page.evaluate(() => document.body.innerText);
+      normalizedPageText = normalizeCompanyName(pageText);
+
+      if (normalizedPageText.includes(normalizedName)) {
+        log(`    ✓ 会社名確認: 会社概要ページで一致`);
+        // 元のURLに戻る
+        await page.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: CONFIG.TIMEOUT });
+        return true;
+      }
+      log(`    ℹ️  会社概要ページでも会社名なし → プライバシーポリシーを探索`);
+      // 元のURLに戻る
+      await page.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: CONFIG.TIMEOUT });
+    } else {
+      log(`    ℹ️  会社概要ページが見つからない → プライバシーポリシーを探索`);
+    }
+
+    // ステップ3: プライバシーポリシーページで確認
+    const foundPrivacy = await findSpecificPage(page, 'privacy', log);
+
+    if (!foundPrivacy) {
+      log(`    ⚠️ プライバシーポリシーページも見つかりません`);
+      return false;
+    }
+
+    pageText = await page.evaluate(() => document.body.innerText);
+    normalizedPageText = normalizeCompanyName(pageText);
+
+    if (normalizedPageText.includes(normalizedName)) {
+      log(`    ✓ 会社名確認: プライバシーポリシーページで一致`);
+      // 元のURLに戻る
+      await page.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: CONFIG.TIMEOUT });
+      return true;
+    }
+
+    log(`    ✗ 会社名確認: 全てのページで不一致`);
+    // 元のURLに戻る
+    await page.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: CONFIG.TIMEOUT });
+    return false;
+
+  } catch (error) {
+    log(`    ❌ 会社名確認エラー: ${error.message}`);
+    return false;
+  }
+}
+
+// ========================================
+// 住所マッチング関連（既存のロジック）
+// ========================================
+
 /**
  * 住所がページ内に含まれているかチェック
  */
@@ -642,6 +765,7 @@ async function scrapeCompany(browser, company, globalIndex, totalCompanies, batc
 
       if (searchResults.length === 0) {
         log(`  ⚠️ 検索結果が0件でした`);
+        company.industry_2_20 = 'クローリング';
         return company;
       }
 
@@ -676,7 +800,14 @@ async function scrapeCompany(browser, company, globalIndex, totalCompanies, batc
         continue;
       }
 
-      log(`  ✅ ホームページを発見！`);
+      // 会社名マッチング（※後で削除・調整可能）
+      const companyNameMatch = await checkCompanyNameMatch(page, company, log);
+      if (!companyNameMatch) {
+        log(`  ⏭️  スキップ: 会社名不一致`);
+        continue;
+      }
+
+      log(`  ✅ ホームページを発見！（住所・会社名ともに一致）`);
 
       // データ抽出前に会社概要ページへ移動
       log(`  🔍 会社概要ページでデータ抽出を試みます...`);
@@ -722,6 +853,9 @@ async function scrapeCompany(browser, company, globalIndex, totalCompanies, batc
       resolve();
     });
   }
+
+  // クローリングで取得したデータであることを識別
+  company.industry_2_20 = 'クローリング';
 
   return company;
 }

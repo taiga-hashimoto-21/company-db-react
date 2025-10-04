@@ -16,11 +16,11 @@ const path = require('path');
 // ========================================
 const CONFIG = {
   // 取得したい日付を設定（YYYY-MM-DD形式）
-  TARGET_DATE_FROM: '2025-07-01',  // 開始日
-  TARGET_DATE_TO: '2025-07-05',    // 終了日
+  TARGET_DATE_FROM: '2025-08-01',  // 開始日
+  TARGET_DATE_TO: '2025-08-05',    // 終了日
 
   // 上限設定（TODO: 後で削除してください）
-  MAX_RESULTS: 300,  // 50件制限（削除して全件取得する場合はこの行とlimit処理を削除）
+  MAX_RESULTS: 1000,  // 50件制限（削除して全件取得する場合はこの行とlimit処理を削除）
 
   // その他設定
   APPLICATION_ID: 'KtLKHsYJGaNRT',  // 国税庁APIのアプリケーションID

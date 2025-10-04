@@ -16,11 +16,8 @@ const path = require('path');
 // ========================================
 const CONFIG = {
   // 取得したい日付を設定（YYYY-MM-DD形式）
-  TARGET_DATE_FROM: '2020-08-01',  // 開始日
-  TARGET_DATE_TO: '2020-08-05',    // 終了日
-
-  // 上限設定（TODO: 後で削除してください）
-  MAX_RESULTS: 300,  // 50件制限（削除して全件取得する場合はこの行とlimit処理を削除）
+  TARGET_DATE_FROM: '2025-09-01',  // 開始日
+  TARGET_DATE_TO: '2025-09-01',    // 終了日（1日のみ取得）
 
   // その他設定
   APPLICATION_ID: 'KtLKHsYJGaNRT',  // 国税庁APIのアプリケーションID
@@ -74,11 +71,7 @@ async function fetchHoujinData(startDate, endDate) {
     const filteredCompanies = companies.filter(c => c.established_year !== null);
     console.log(`📊 設立年月あり: ${filteredCompanies.length}件`);
 
-    // TODO: 1000件制限（後で削除してください）
-    const limitedCompanies = filteredCompanies.slice(0, CONFIG.MAX_RESULTS);
-    console.log(`📊 制限適用後: ${limitedCompanies.length}件`);
-
-    return limitedCompanies;
+    return filteredCompanies;
 
   } catch (error) {
     console.error('❌ 法人データ取得エラー:', error.message);

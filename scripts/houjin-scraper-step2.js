@@ -18,7 +18,7 @@ const CONFIG = {
   WAIT_MIN: 1000,        // 最小待機時間（ミリ秒）
   WAIT_MAX: 3000,        // 最大待機時間（ミリ秒）
   TIMEOUT: 30000,        // ページタイムアウト（30秒）
-  PARALLEL_BROWSERS: 20,  // 並列実行するブラウザの数（GitHub Actions制約: 7GB RAM / 2コア）
+  PARALLEL_BROWSERS: 5,  // 並列実行するブラウザの数（GitHub Actions制約: 7GB RAM / 2コア）
 };
 
 // ログ出力用のロック

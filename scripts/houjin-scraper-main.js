@@ -3,68 +3,116 @@
  *
  * Step1: 国税庁APIから法人データ取得
  * Step2: ホームページをスクレイピングして情報補完
- * Step3: (今後実装) DBに保存
+ * Step3: DBに保存
  */
+
+// 環境変数を読み込み
+require('dotenv').config({ path: require('path').join(__dirname, '..', '.env.local') });
 
 const { fetchHoujinData, CONFIG } = require('./houjin-scraper-step1');
 const { scrapeCompanies } = require('./houjin-scraper-step2');
+const { Pool } = require('pg');
+const { Transform } = require('stream');
+const copyFrom = require('pg-copy-streams').from;
 const fs = require('fs').promises;
 const path = require('path');
 
 /**
- * 結果をCSVで保存（確認用）
+ * Step3: データベースに保存
  */
-async function saveResultsToCSV(companies, filename) {
-  const headers = [
-    'company_name',
-    'company_website',
-    'representative',
-    'address_1',
-    'address_2',
-    'prefecture',
-    'employees',
-    'capital_amount',
-    'established_year',
-    'established_month',
-    'listing_status',
-    'business_type',
-    'industry_1',
-    'industry_2_1',
-    'industry_2_2',
-    'industry_2_3',
-    'industry_2_4',
-    'industry_2_5',
-    'industry_2_6',
-    'industry_2_7',
-    'industry_2_8',
-    'industry_2_9',
-    'industry_2_10',
-    'industry_2_11',
-    'industry_2_12',
-    'industry_2_13',
-    'industry_2_14',
-    'industry_2_15',
-    'industry_2_16',
-    'industry_2_17',
-    'industry_2_18',
-    'industry_2_19',
-    'industry_2_20',
-  ];
-
-  const csvLines = [headers.join(',')];
-  companies.forEach(company => {
-    const row = headers.map(header => {
-      const value = company[header];
-      return value === null || value === undefined ? '' : `"${value}"`;
-    });
-    csvLines.push(row.join(','));
+async function saveToDatabase(companies) {
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
   });
 
-  const csvContent = csvLines.join('\n');
-  const outputPath = path.join('/Users/hashimototaiga/Desktop', filename);
-  await fs.writeFile(outputPath, csvContent, 'utf-8');
+  const client = await pool.connect();
 
-  console.log(`💾 CSV保存完了: ${outputPath}`);
+  try {
+    console.log(`💾 データベースへ保存開始... (${companies.length}件)`);
+
+    // TSV形式のストリームを作成
+    const tsvStream = new Transform({
+      objectMode: true,
+      transform(company, encoding, callback) {
+        const columns = [
+          'company_name',
+          'company_website',
+          'representative',
+          'address_1',
+          'address_2',
+          'prefecture',
+          'employees',
+          'capital_amount',
+          'established_year',
+          'established_month',
+          'listing_status',
+          'business_type',
+          'industry_1',
+          'industry_2_1',
+          'industry_2_2',
+          'industry_2_3',
+          'industry_2_4',
+          'industry_2_5',
+          'industry_2_6',
+          'industry_2_7',
+          'industry_2_8',
+          'industry_2_9',
+          'industry_2_10',
+          'industry_2_11',
+          'industry_2_12',
+          'industry_2_13',
+          'industry_2_14',
+          'industry_2_15',
+          'industry_2_16',
+          'industry_2_17',
+          'industry_2_18',
+          'industry_2_19',
+          'industry_2_20',
+        ];
+
+        const row = columns.map(col => {
+          const value = company[col];
+          return value === null || value === undefined ? '\\N' : String(value);
+        }).join('\t') + '\n';
+
+        callback(null, row);
+      }
+    });
+
+    // COPY FROMクエリ
+    const copyQuery = `
+      COPY companies (
+        company_name, company_website, representative, address_1, address_2,
+        prefecture, employees, capital_amount, established_year, established_month,
+        listing_status, business_type, industry_1, industry_2_1, industry_2_2,
+        industry_2_3, industry_2_4, industry_2_5, industry_2_6, industry_2_7,
+        industry_2_8, industry_2_9, industry_2_10, industry_2_11, industry_2_12,
+        industry_2_13, industry_2_14, industry_2_15, industry_2_16, industry_2_17,
+        industry_2_18, industry_2_19, industry_2_20
+      ) FROM STDIN WITH (FORMAT TEXT, DELIMITER E'\\t', NULL '\\N')
+    `;
+
+    const stream = client.query(copyFrom(copyQuery));
+
+    // データを送信
+    for (const company of companies) {
+      tsvStream.write(company);
+    }
+    tsvStream.end();
+
+    // ストリームをパイプ
+    await new Promise((resolve, reject) => {
+      tsvStream.pipe(stream)
+        .on('finish', resolve)
+        .on('error', reject);
+    });
+
+    console.log(`✅ データベース保存完了: ${companies.length}件`);
+
+  } finally {
+    client.release();
+    await pool.end();
+  }
 }
 
 /**
@@ -117,14 +165,15 @@ async function main() {
       }
     });
 
-    console.log(`🔍 重複除外: ${companiesWithWebsite.length}件 → ${uniqueCompanies.length}件`);
+    console.log(`🔍 重複除外: ${companiesWithWebsite.length}件 → ${uniqueCompanies.length}件\n`);
 
-    // 結果をCSVに保存
-    const filename = `houjin_scraped_${CONFIG.TARGET_DATE_FROM}_${CONFIG.TARGET_DATE_TO}.csv`;
-    await saveResultsToCSV(uniqueCompanies, filename);
+    // Step3: データベースに保存
+    console.log('💾 Step3を実行中...\n');
+    await saveToDatabase(uniqueCompanies);
+    console.log(`✅ Step3完了\n`);
 
     // 統計情報
-    console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log('📊 最終結果');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
@@ -135,14 +184,13 @@ async function main() {
 
     console.log(`処理件数: ${scrapedCompanies.length}件`);
     console.log(`ホームページ発見: ${websiteCount}件 (${Math.round(websiteCount / scrapedCompanies.length * 100)}%)`);
-    console.log(`CSV保存件数: ${uniqueCompanies.length}件\n`);
-    console.log(`--- CSV保存データの内訳 ---`);
+    console.log(`DB保存件数: ${uniqueCompanies.length}件\n`);
+    console.log(`--- DB保存データの内訳 ---`);
     console.log(`代表者名: ${representativeCount}件 (${Math.round(representativeCount / uniqueCompanies.length * 100)}%)`);
     console.log(`資本金: ${capitalCount}件 (${Math.round(capitalCount / uniqueCompanies.length * 100)}%)`);
     console.log(`従業員数: ${employeesCount}件 (${Math.round(employeesCount / uniqueCompanies.length * 100)}%)`);
 
-    console.log('\n✅ 全ての処理が完了しました！');
-    console.log(`📁 保存先: ~/Desktop/${filename}\n`);
+    console.log('\n✅ 全ての処理が完了しました！\n');
 
   } catch (error) {
     console.error('\n❌ エラーが発生しました:', error.message);
